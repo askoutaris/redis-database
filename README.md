@@ -1,422 +1,248 @@
-# BlueBrown.Sportsbook.Common
+# BlueBrown.Sportsbook.Redis
 
-Core infrastructure library providing database size monitoring capabilities for BlueBrown Sportsbook services.
+Comprehensive Redis integration library for BlueBrown Sportsbook applications.
 
 ## Overview
 
-This is the foundational package that provides the core infrastructure for database size monitoring across different database types. It includes a hosted service architecture that can collect database size metrics at regular intervals and report them through a pluggable metrics system.
+This library provides Redis functionality for the BlueBrown.Sportsbook platform, offering multiple features for different use cases:
+
+### Features
+
+- **[Database Operations](./Database/README.md)** - Entity caching, collections, streams, and data persistence
+  - Entity Collections with expiration management
+  - Concurrent Collections with optimistic locking
+  - Child/Parent hierarchical relationships
+  - Redis Streams for event processing
+  - **Immediate execution** (TryGet) - Direct database operations without batching
+  - **Deferred execution** (TryRead) - Batched operations for optimal performance
+
+- **[Database Size Monitoring](./DatabaseSizeCollectors/README.md)** - Redis keyspace metrics collection
+  - Keyspace statistics tracking
+  - Integration with Common metrics connector
+  - Scheduled background collection
 
 ## Installation
 
 ```bash
-dotnet add package BlueBrown.Sportsbook.Common
+dotnet add package BlueBrown.Sportsbook.Redis
 ```
 
-## Key Features
+**Dependencies:**
+- `BlueBrown.Sportsbook.Common`
+- `StackExchange.Redis`
 
-- **Hosted Service Architecture** - Background service that runs database size collection at configurable intervals
-- **Pluggable Collectors** - Support for multiple database types through extension packages
-- **Metrics Integration** - Configurable metrics reporting through `IDatabaseMetricsConnector`
-- **Fluent Configuration** - Easy-to-use fluent API for service registration
-- **Dependency Injection** - Full DI container integration
-- **Extensible Design** - Easy to add new database types and collectors
+## Quick Start
 
-## Core Components
+### Database Operations
 
-### Interfaces
-
-#### `IDatabaseSizeCollector`
-Base interface for all database size collectors.
+For entity caching, collections, and Redis operations:
 
 ```csharp
-public interface IDatabaseSizeCollector
+using BlueBrown.Sportsbook.Redis.Database;
+using StackExchange.Redis;
+
+// Register Redis connection
+builder.Services.AddSingleton<IConnectionMultiplexer>(provider =>
+    ConnectionMultiplexer.Connect("localhost:6379"));
+
+// Register database functionality
+builder.Services.AddRedisDatabase((provider, factory) =>
 {
-    Task Collect();
-}
+    var serializer = new JsonRedisSerializer();
+
+    // Configure your collections
+    factory.RegisterEntityCollection<int, User>(cfg => cfg
+        .WithKeySpace("users")
+        .WithSerializer(serializer)
+        .WithDefaultLifetimeProvider(TimeSpan.FromMinutes(15))
+        .WithUniqueKeyFactory(id => id.ToString()));
+});
 ```
 
-#### `IDatabaseMetricsConnector`
-Interface for reporting collected metrics.
+See [Database README](./Database/README.md) for detailed documentation.
+
+### Size Monitoring
+
+For monitoring Redis keyspace metrics:
 
 ```csharp
-public interface IDatabaseMetricsConnector
-{
-    void RecordSize(string collectorName, string collectionName, long count);
-}
-```
+using BlueBrown.Sportsbook.Redis.DatabaseSizeCollectors;
 
-#### `IDatabaseSizeCollectorsRegistry`
-Registry interface for fluent configuration.
-
-```csharp
-public interface IDatabaseSizeCollectorsRegistry
-{
-    IServiceCollection Services { get; }
-}
-```
-
-### Configuration
-
-#### `DatabaseSizeCollectorsSettings`
-Configuration settings for the monitoring system.
-
-```csharp
-public class DatabaseSizeCollectorsSettings
-{
-    public DatabaseSizeCollectorsSettings(TimeSpan period);
-    public TimeSpan Period { get; }
-}
-```
-
-## Basic Usage
-
-### 1. Implement Metrics Connector
-
-First, implement the `IDatabaseMetricsConnector` interface to define how metrics are reported:
-
-```csharp
-public class MyMetricsConnector : IDatabaseMetricsConnector
-{
-    private readonly ILogger<MyMetricsConnector> _logger;
-
-    public MyMetricsConnector(ILogger<MyMetricsConnector> logger)
-    {
-        _logger = logger;
-    }
-
-    public void RecordSize(string collectorName, string collectionName, long count)
-    {
-        _logger.LogInformation("Collector {CollectorName}: {CollectionName} = {Count}",
-            collectorName, collectionName, count);
-
-        // Report to your metrics system (Prometheus, Application Insights, etc.)
-        // Example: _metricsClient.ReportGauge("database_collection_size", count,
-        //     new[] { ("collector", collectorName), ("collection", collectionName) });
-    }
-}
-```
-
-### 2. Configure Services
-
-Register the core services in your DI container:
-
-```csharp
-var builder = WebApplication.CreateBuilder(args);
-
-// Register your metrics connector
-builder.Services.AddSingleton<IDatabaseMetricsConnector, MyMetricsConnector>();
-
-// Configure database size collectors (runs every 5 minutes)
-builder.Services.AddDatabaseSizeCollectors(provider =>
-    new DatabaseSizeCollectorsSettings(TimeSpan.FromMinutes(5)));
-
-var app = builder.Build();
-app.Run();
-```
-
-### 3. Add Database-Specific Collectors
-
-Use extension packages to add specific database types:
-
-```csharp
-// Add SQL Server monitoring
 builder.Services.AddDatabaseSizeCollectors(provider =>
     new DatabaseSizeCollectorsSettings(TimeSpan.FromMinutes(5)))
-    .AddSqlSizeCollector(provider =>
-        new SqlSizeCollectorSettings(
-            connectionString: "Server=localhost;Database=MyApp;Trusted_Connection=true;",
-            collectorName: "MainDatabase",
+    .AddRedisSizeCollector(provider =>
+        new RedisSizeCollectorSettings(
+            database: provider.GetRequiredService<IConnectionMultiplexer>().GetDatabase(0),
+            collectorName: "Redis-Cache",
             metrics: provider.GetRequiredService<IDatabaseMetricsConnector>()));
-```
-
-## Advanced Configuration
-
-### Multiple Monitoring Intervals
-
-You can only configure one monitoring interval per application, but you can add multiple collectors:
-
-```csharp
-builder.Services.AddDatabaseSizeCollectors(provider =>
-    new DatabaseSizeCollectorsSettings(TimeSpan.FromMinutes(10)))
-    .AddSqlSizeCollector(provider => /* SQL config */)
-    .AddRedisSizeCollector(provider => /* Redis config */);
-```
-
-### Custom Collectors
-
-Implement your own database collector:
-
-```csharp
-public class CustomDatabaseCollector : IDatabaseSizeCollector
-{
-    private readonly string _collectorName;
-    private readonly IDatabaseMetricsConnector _metrics;
-
-    public CustomDatabaseCollector(string collectorName, IDatabaseMetricsConnector metrics)
-    {
-        _collectorName = collectorName;
-        _metrics = metrics;
-    }
-
-    public Task Collect()
-    {
-        // Your custom collection logic here
-        var tableCount = GetTableCount();
-        var recordCount = GetRecordCount();
-
-        // Record different metrics
-        _metrics.RecordSize(_collectorName, "Tables", tableCount);
-        _metrics.RecordSize(_collectorName, "Records", recordCount);
-
-        return Task.CompletedTask;
-    }
-
-    private long GetTableCount()
-    {
-        // Implement your collection logic
-        return 5; // Example: 5 tables
-    }
-
-    private long GetRecordCount()
-    {
-        // Implement your collection logic
-        return 10000; // Example: 10,000 records
-    }
-}
-
-// Register your custom collector
-builder.Services.AddDatabaseSizeCollectors(provider =>
-    new DatabaseSizeCollectorsSettings(TimeSpan.FromMinutes(5)));
-
-builder.Services.AddSingleton<IDatabaseSizeCollector>(provider =>
-    new CustomDatabaseCollector(
-        "MyCustomDB",
-        provider.GetRequiredService<IDatabaseMetricsConnector>()));
-```
-
-## Extension Packages
-
-The Common library is designed to work with database-specific extension packages:
-
-### Available Extensions
-
-- **[BlueBrown.Sportsbook.SQL](../SQL/README.md)** - SQL Server database monitoring
-- **[BlueBrown.Sportsbook.Redis](../Redis/README.md)** - Redis memory and keyspace monitoring
-
-### Creating Custom Extensions
-
-To create your own extension package:
-
-1. Reference `BlueBrown.Sportsbook.Common`
-2. Implement `IDatabaseSizeCollector` for your database type
-3. Create extension methods for `IDatabaseSizeCollectorsRegistry`
-4. Package and distribute
-
-Example extension method:
-
-```csharp
-public static class MyDatabaseExtensions
-{
-    public static IDatabaseSizeCollectorsRegistry AddMyDatabaseCollector(
-        this IDatabaseSizeCollectorsRegistry registry,
-        Func<IServiceProvider, MyDatabaseSettings> configure)
-    {
-        ArgumentNullException.ThrowIfNull(configure);
-        ArgumentNullException.ThrowIfNull(registry);
-
-        registry.Services.AddSingleton<IDatabaseSizeCollector>(ctx =>
-        {
-            var settings = configure(ctx);
-            return new MyDatabaseCollector(settings);
-        });
-
-        return registry;
-    }
-}
 ```
 
 ## Architecture
 
-### Hosted Service Pattern
-
-The library uses .NET's `IHostedService` pattern to run background collection:
+The library is organized into feature-specific namespaces:
 
 ```
-Application Startup
-       ↓
-DatabaseSizeCollectorsRegistry
-       ↓
-HostedService (Background Service)
-       ↓
-Periodic Collection (every Period)
-       ↓
-For Each IDatabaseSizeCollector:
-       ↓
-collector.Collect()
-       ↓
-IDatabaseMetricsConnector.RecordSize()
+BlueBrown.Sportsbook.Redis
+├── Database/               # Entity collections, streams, caching
+│   ├── Collections/        # Entity, Concurrent, Child collections
+│   ├── Adapters/          # Low-level Redis adapters
+│   ├── Builders/          # Fluent configuration builders
+│   ├── Serializers/       # Serialization infrastructure
+│   └── Factories/         # Collection factory pattern
+└── DatabaseSizeCollectors/ # Keyspace monitoring
 ```
 
-### Dependency Injection Flow
+## Key Concepts
 
-1. **Registration Phase**: Services and collectors are registered with DI container
-2. **Resolution Phase**: Hosted service resolves all `IDatabaseSizeCollector` instances
-3. **Execution Phase**: Background service calls each collector at configured intervals
+### Serialization
 
-## Configuration Patterns
-
-### Environment-Specific Settings
+The library uses a pluggable serialization strategy. You must provide your own `IRedisSerializer` implementation:
 
 ```csharp
-builder.Services.AddDatabaseSizeCollectors(provider =>
+public class JsonRedisSerializer : IRedisSerializer
 {
-    var environment = provider.GetRequiredService<IWebHostEnvironment>();
-    var interval = environment.IsDevelopment()
-        ? TimeSpan.FromMinutes(1)  // Frequent in dev
-        : TimeSpan.FromMinutes(15); // Less frequent in prod
+    public byte[] Serialize<TType>(TType value) =>
+        Encoding.UTF8.GetBytes(JsonSerializer.Serialize(value));
 
-    return new DatabaseSizeCollectorsSettings(interval);
-});
-```
-
-### Configuration-Based Setup
-
-```csharp
-// appsettings.json
-{
-  "DatabaseMonitoring": {
-    "IntervalMinutes": 10,
-    "Enabled": true
-  }
-}
-
-// In code
-var config = builder.Configuration.GetSection("DatabaseMonitoring");
-if (config.GetValue<bool>("Enabled"))
-{
-    var intervalMinutes = config.GetValue<int>("IntervalMinutes", 5);
-    builder.Services.AddDatabaseSizeCollectors(provider =>
-        new DatabaseSizeCollectorsSettings(TimeSpan.FromMinutes(intervalMinutes)));
+    public TType? Deserialize<TType>(byte[] bytes) =>
+        JsonSerializer.Deserialize<TType>(Encoding.UTF8.GetString(bytes));
 }
 ```
 
-## Logging and Diagnostics
+### Connection Management
 
-The library integrates with .NET logging:
+Always use a singleton `IConnectionMultiplexer`:
 
 ```csharp
-// Enable debug logging for database collectors
-builder.Logging.AddFilter("BlueBrown.Sportsbook.Common.Infrastructure.DatabaseSizeCollectors", LogLevel.Debug);
+// ✅ Correct - Singleton
+builder.Services.AddSingleton<IConnectionMultiplexer>(provider =>
+    ConnectionMultiplexer.Connect("localhost:6379"));
+
+// ❌ Wrong - Don't create per request
 ```
 
-Logs include:
-- Collection start/completion
-- Individual collector execution
-- Error handling and retries
-- Performance metrics
+## Execution Patterns
 
-## Error Handling
+The library supports two execution patterns for read operations:
 
-The hosted service includes robust error handling:
+### Immediate Execution (TryGet)
 
-- **Individual Collector Failures**: One collector failure doesn't stop others
-- **Retry Logic**: Automatic retry for transient failures
-- **Graceful Degradation**: Service continues running despite errors
-- **Comprehensive Logging**: All errors are logged with context
+**Use when:** You need a single entity immediately and want the simplest code.
 
-## Performance Considerations
+**Characteristics:**
+- Executes database operation immediately
+- Returns `Task<TEntity?>` directly
+- No batching - each call is a separate Redis command
+- Ideal for single-entity lookups
 
-- **Lightweight Collections**: Database queries are optimized for minimal impact
-- **Parallel Execution**: Multiple collectors can run concurrently
-- **Resource Management**: Proper disposal of database connections
-- **Configurable Intervals**: Adjust frequency based on your needs
-
-## Testing
-
-### Unit Testing Collectors
-
+**Example:**
 ```csharp
-[Test]
-public async Task CustomCollector_ShouldReportMetrics()
+var context = new RedisContext(database);
+var collection = factory.GetEntityCollection<int, User>(context);
+
+// Immediate execution - returns Task<User?> directly
+User? user = await collection.TryGet(userId);
+
+if (user != null)
 {
-    // Arrange
-    var mockMetrics = Substitute.For<IDatabaseMetricsConnector>();
-    var collector = new CustomDatabaseCollector("test", mockMetrics);
-
-    // Act
-    await collector.Collect();
-
-    // Assert
-    mockMetrics.Received(1).RecordSize("test", Arg.Any<string>(), Arg.Any<long>());
+    Console.WriteLine($"Found user: {user.Name}");
 }
 ```
 
-### Integration Testing
+**Adapter-level example:**
+```csharp
+var adapter = new StringAdapter(context, serializer, resultReader);
+
+// Execute immediately without batching
+User? user = await adapter.TryGet<User>("users:123");
+```
+
+### Deferred Execution (TryRead)
+
+**Use when:** You need to batch multiple operations for optimal performance.
+
+**Characteristics:**
+- Registers operation in batch for later execution
+- Returns `ReadResult<TEntity>` wrapper
+- Operations execute together when batch is executed
+- Ideal for reading multiple entities in parallel
+
+**Example:**
+```csharp
+var context = new RedisContext(database);
+var collection = factory.GetEntityCollection<int, User>(context);
+
+// Deferred execution - returns ReadResult<User> wrapper
+var userResult1 = collection.TryRead(userId1);
+var userResult2 = collection.TryRead(userId2);
+var userResult3 = collection.TryRead(userId3);
+
+// Execute all operations in parallel
+await context.ExecuteBatch();
+
+// Access results
+User? user1 = await userResult1;
+User? user2 = await userResult2;
+User? user3 = await userResult3;
+```
+
+**Adapter-level example:**
+```csharp
+var adapter = new HashsetAdapter(context, serializer, resultReader);
+
+// Register multiple operations in batch
+var result1 = adapter.TryReadField<User>("users:hash", "user:1");
+var result2 = adapter.TryReadField<User>("users:hash", "user:2");
+
+// Execute batch
+await context.ExecuteBatch();
+
+// Access results
+User? user1 = await result1;
+User? user2 = await result2;
+```
+
+### Choosing Between Patterns
+
+| Scenario | Pattern | Method |
+|----------|---------|--------|
+| Single entity lookup | Immediate | `TryGet` |
+| Multiple entities from different keys | Deferred | `TryRead` + `ExecuteBatch` |
+| Simple, straightforward code | Immediate | `TryGet` |
+| Performance-critical batch operations | Deferred | `TryRead` + `ExecuteBatch` |
+
+### All Collection Types Support Both Patterns
 
 ```csharp
-[Test]
-public async Task HostedService_ShouldCollectFromAllRegisteredCollectors()
-{
-    // Arrange
-    var services = new ServiceCollection();
-    services.AddLogging();
-    services.AddSingleton<IDatabaseMetricsConnector, TestMetricsConnector>();
-    services.AddDatabaseSizeCollectors(provider =>
-        new DatabaseSizeCollectorsSettings(TimeSpan.FromMilliseconds(100)));
+// EntityCollection
+var user = await entityCollection.TryGet(userId);                    // Immediate
+var userResult = entityCollection.TryRead(userId);                   // Deferred
 
-    var serviceProvider = services.BuildServiceProvider();
-    var hostedService = serviceProvider.GetRequiredService<IHostedService>();
+// ConcurrentEntityCollection
+var order = await concurrentCollection.TryGet(orderId);              // Immediate
+var orderResult = concurrentCollection.TryRead(orderId);             // Deferred
 
-    // Act & Assert
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(1));
-    await hostedService.StartAsync(cts.Token);
-    await Task.Delay(500, cts.Token); // Let it run
-    await hostedService.StopAsync(cts.Token);
-}
+// ChildEntityCollection
+var item = await childCollection.TryGetChild(orderId, itemId);       // Immediate
+var itemResult = childCollection.TryReadChild(orderId, itemId);      // Deferred
 ```
+
+## Feature Documentation
+
+- **[Database Operations](./Database/README.md)** - Complete guide to entity collections, streams, and caching
+- **[Database Size Monitoring](./DatabaseSizeCollectors/README.md)** - Redis keyspace metrics collection and monitoring
+- **[CLAUDE.md](./CLAUDE.md)** - Detailed technical architecture and development documentation
 
 ## Best Practices
 
-1. **Metrics Connector**: Implement robust error handling in your metrics connector
-2. **Database Permissions**: Use least-privilege accounts for database connections
-3. **Monitoring Intervals**: Choose intervals based on your database change frequency
-4. **Resource Management**: Ensure proper disposal of database connections
-5. **Error Handling**: Log errors but don't let them crash the application
-6. **Testing**: Test both individual collectors and the complete integration
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Service Not Starting**
-   - Check that `IDatabaseMetricsConnector` is registered
-   - Verify logging configuration
-   - Review startup errors
-
-2. **Collectors Not Running**
-   - Confirm collectors are registered with DI
-   - Check service registration order
-   - Review hosted service logs
-
-3. **Metrics Not Appearing**
-   - Verify metrics connector implementation
-   - Check network connectivity to metrics system
-   - Review error logs
-
-### Debug Logging
-
-Enable detailed logging to troubleshoot issues:
-
-```csharp
-builder.Logging.AddConsole()
-       .AddFilter("BlueBrown.Sportsbook.Common", LogLevel.Debug);
-```
-
-## Related Documentation
-
-- [SQL Extension Package](../SQL/README.md)
-- [Redis Extension Package](../Redis/README.md)
-- [Architecture Documentation](CLAUDE.md)
+1. **Use Singleton Connections** - `IConnectionMultiplexer` should be registered as a singleton
+2. **Bring Your Own Serializer** - Implement `IRedisSerializer` for your use case
+3. **Choose the Right Execution Pattern**:
+   - Use `TryGet` for single entity lookups (immediate execution)
+   - Use `TryRead` + `ExecuteBatch` for multiple operations (deferred execution)
+4. **Batch Operations** - Use `RedisContext` batching for multiple operations to minimize network round-trips
+5. **Monitor Keyspace** - Use size collectors to track Redis memory usage
+6. **Handle Conflicts** - Catch `RedisConflictException` for concurrent operations
 
 ## Support
 

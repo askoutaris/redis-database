@@ -1,335 +1,1063 @@
-# Claude Context - Core.Sportsbook.Common
+# Claude Context - BlueBrown.Sportsbook.Redis
+
+## Table of Contents
+
+- [Project Overview](#project-overview)
+- [Documentation Structure](#documentation-structure)
+- [Feature: Database Operations](#feature-database-operations)
+  - [Key Components](#database-operations---key-components)
+  - [Architecture](#database-operations---architecture)
+  - [Testing](#database-operations---testing)
+  - [Recent Work](#database-operations---recent-work)
+- [Feature: Database Size Collectors](#feature-database-size-collectors)
+  - [Key Components](#database-size-collectors---key-components)
+  - [Architecture](#database-size-collectors---architecture)
+  - [Testing](#database-size-collectors---testing)
+  - [Recent Work](#database-size-collectors---recent-work)
+- [Feature: Cache Proxy](#feature-cache-proxy)
+  - [Key Components](#cache-proxy---key-components)
+  - [Architecture](#cache-proxy---architecture)
+  - [Testing](#cache-proxy---testing)
+- [Cross-Cutting Concerns](#cross-cutting-concerns)
+  - [Logging Strategy](#logging-strategy)
+  - [Testing Requirements](#testing-requirements)
+  - [Dependencies](#dependencies)
+- [Current Status Summary](#current-status-summary)
+- [Usage Examples](#usage-examples)
+
+---
 
 ## Project Overview
-This is a .NET library containing common infrastructure components for the BlueBrown Sportsbook application, specifically focusing on database size collection and monitoring capabilities.
 
-## Key Components
+This is an extension package for the BlueBrown.Sportsbook.Common library that provides comprehensive Redis functionality including:
 
-### PeriodicWork Infrastructure
-Located in `Threading\PeriodicWork.cs` - A reusable infrastructure for executing periodic tasks with proper resource management and testability.
+- **Database Operations** - Entity caching, collections, streams, and data persistence
+- **Database Size Monitoring** - Redis keyspace metrics collection
+- **Cache Proxy** - Generic caching abstraction with versioning and adapter patterns
 
-#### Core Components
-- **AsyncEventHandler**: Delegate for asynchronous event handlers (`public delegate Task AsyncEventHandler()`)
-- **IPeriodicWork**: Interface defining periodic work contracts with event-driven architecture
-- **PeriodicWork**: Implementation providing timer-based periodic execution with proper disposal patterns
+The library is designed as a multi-feature package where each feature is self-contained but shares common infrastructure.
 
-#### Key Features
-- **Event-Driven Architecture**: Uses `OnTick` event for decoupled periodic task execution
-- **Proper Resource Management**: Implements `IDisposable` with field-level `PeriodicTimer` management
-- **Testable Design**: Interface-based design allows easy mocking and dependency injection
-- **Cancellation Support**: Handles `CancellationToken` for graceful shutdown
-- **Exception Handling**: Catches and logs exceptions without stopping the periodic execution
-- **Clean Lifecycle**: `Stop()` disposes timer, preventing restart (one-time use pattern)
+## Documentation Structure
 
-#### Architecture Decisions
-- **Field-Level Timer**: `PeriodicTimer` moved from local to field level for proper disposal control
-- **Stop() Behavior**: Calling `Stop()` disposes the timer, causing normal loop exit (no restart capability)
-- **Simple Event Model**: Single `OnTick` event for maximum flexibility and testability
-- **No Restart After Stop**: Once stopped, the instance cannot be restarted (create new instance)
+The project maintains organized documentation at multiple levels:
 
-### Database Size Collectors
-Located in `Infrastructure\DatabaseSizeCollectors\` - A system for periodically collecting and reporting database size metrics using a centralized hosted service architecture.
+- **[README.md](./README.md)** - High-level library overview and feature list
+- **[Database/README.md](./Database/README.md)** - Complete guide to entity collections, streams, and caching
+- **[DatabaseSizeCollectors/README.md](./DatabaseSizeCollectors/README.md)** - Redis keyspace metrics collection documentation
+- **[CLAUDE.md](./CLAUDE.md)** - This file - Technical architecture and development documentation
 
-#### Core Interfaces
-- **IDatabaseSizeCollector**: Contract for database size collectors that gather metrics
-- **IDatabaseMetricsConnector**: Contract for reporting collected metrics to monitoring systems
-- **IDatabaseSizeCollectorsRegistry**: Fluent interface for registering multiple collectors
+---
 
-#### Implementations
-- **HostedService**: Non-generic background service that manages multiple collectors simultaneously
-- Extension packages provide specific collectors:
-  - **SqlSizeCollector**: (in SQL package) Collects table row counts from SQL Server using system views
-  - **RedisSizeCollector**: (in Redis package) Collects keyspace metrics from Redis using INFO KEYSPACE command
+## Feature: Database Operations
 
-#### Configuration
-- **DatabaseSizeCollectorsSettings**: Central timing configuration for the hosted service (period setting)
-- **DatabaseSizeCollectorsRegistry**: Internal registry implementation for fluent collector registration
-- Extension package settings:
-  - **SqlSizeCollectorSettings**: (in SQL package) Configuration for SQL Server collectors
-  - **RedisSizeCollectorSettings**: (in Redis package) Configuration for Redis collectors
+**Location:** `Database\` namespace
 
-#### Service Registration
-- **ServiceCollectionExtensions**: Extension methods to register the database size collection system
-  - `AddDatabaseSizeCollectors()`: Registers the central hosted service and returns a registry for adding collectors
-- Extension package registration methods:
-  - `AddSqlSizeCollector()`: (in SQL package) Registers SQL Server collectors
-  - `AddRedisSizeCollector()`: (in Redis package) Registers Redis collectors
+Provides core Redis database functionality through adapter patterns, collections, and streams.
 
-## Architecture Patterns
+### Database Operations - Key Components
 
-### Centralized Hosted Service Pattern (Current Architecture)
-The system uses a single `HostedService` that:
-- Manages multiple collectors of different types in one service
-- Runs as a background service in .NET applications
-- Executes all registered collectors at the same configurable interval (default: 30 seconds)
-- Handles cancellation tokens gracefully for all collectors
-- Provides comprehensive error logging with per-collector exception isolation
-- Uses `IReadOnlyCollection<IDatabaseSizeCollector>` resolved from DI to get all registered collectors
+#### Core Infrastructure
 
-### Registry Pattern
-The fluent registration pattern:
+- **RedisContext**: Central context for managing Redis operations, transactions, and batched commands
+- **ReadResult<T>**: Generic result wrapper for handling asynchronous Redis read operations
+- **IExpirationUpdater**: Interface for managing Redis key expiration policies
+
+#### Exception Types
+
+- **RedisStackExchangeException**: Wraps all StackExchange.Redis library exceptions (infrastructure/communication errors)
+- **RedisConflictException**: Business logic conflicts from transaction condition failures (NOT wrapped)
+
+#### Redis Adapters
+
+- **StringAdapter**: Handles Redis string operations with object serialization, supports both immediate (`TryGet`) and deferred (`TryRead`) execution patterns
+- **HashsetAdapter**: Manages Redis hash operations with field-level access, supports both immediate (`TryGetField`) and deferred (`TryReadField`) execution patterns
+- **RedisStreamAdapter**: Provides Redis Streams functionality with consumer groups and direct database operations
+- **ResultReader**: Centralized deserialization handler with error logging and corrupted key cleanup
+
+#### Collections
+
+- **EntityCollection**: Simple caching using Redis strings, supports both immediate (`TryGet`) and deferred (`TryRead`) execution patterns
+- **ConcurrentEntityCollection**: Optimistic concurrency control with version tokens, supports both immediate (`TryGet`) and deferred (`TryRead`) execution patterns, SetVersion executes before SetField for consistency
+- **ChildEntityCollection**: Hierarchical parent-child data structures using Redis hashes, supports both immediate (`TryGetChild`) and deferred (`TryReadChild`) execution patterns
+
+#### Serialization Infrastructure
+
+- **IRedisSerializer**: Interface for object serialization/deserialization to Redis
+- **RedisSerializerSignatureDecorator**: Decorator that adds type signature validation to detect schema changes
+
+#### Builder Pattern
+
+- **EntityCollectionBuilder** + Steps (3 steps)
+- **ConcurrentEntityCollectionBuilder** + Steps (5 steps)
+- **ChildEntityCollectionBuilder** + Steps (6 steps)
+- **StreamAdapterBuilder** + Steps (3 steps)
+
+#### Factory Pattern
+
+- **CollectionsFactory**: Registration-based factory with builder caching for performance and support for named registrations
+
+### Database Operations - Architecture
+
+#### RedisContext
+
+The central orchestrator for Redis operations that supports:
+
+- **Transaction Management**: Conditional operations with multiple commands
+- **Batch Operations**: Parallel execution of multiple Redis commands
+- **Command Queuing**: Deferred execution pattern for optimal performance
+- **Expiration Management**: Integrated key lifetime handling
+
 ```csharp
-services.AddDatabaseSizeCollectors(provider => new DatabaseSizeCollectorsSettings(TimeSpan.FromMinutes(5)))
-    .AddSqlSizeCollector(provider => new SqlSizeCollectorSettings(...))
-    .AddRedisSizeCollector(provider => new RedisSizeCollectorSettings(...));
+public class RedisContext : IRedisContext
+{
+    public IDatabase Database { get; }
+    public IBatch Batch { get; }
+
+    public Task<T> AddBatch<T>(Func<IBatch, Task<T>> action);
+    public void AddCommand(Func<IDatabaseAsync, Task> action);
+    public void AddCondition(Condition condition);
+    public void SetExpiration(RedisKey key, TimeSpan? expiration);
+    public Task Commit();
+    public Task ExecuteBatch();
+}
 ```
 
-### Settings Pattern
-Configuration classes follow a consistent pattern:
-- Required dependencies as constructor parameters (connection info, collector name, metrics connector)
-- Immutable properties
-- Simple constructor with all required parameters
-- No period settings (timing controlled centrally by DatabaseSizeCollectorsSettings)
+#### Adapter Pattern Implementation
 
-## Service Registration Behavior
+All Redis adapters follow a consistent deferred execution pattern:
 
-### Important Registration Rules
-1. **Single Hosted Service**: Only one `HostedService` instance is registered per application
-2. **First Configuration Wins**: Multiple calls to `AddDatabaseSizeCollectors()` keep the first settings (subsequent calls are ignored)
-3. **Collector Collection**: The hosted service automatically resolves all registered `IDatabaseSizeCollector` instances via DI
-4. **Empty Collections Supported**: The system works with zero collectors (empty collection)
+1. **Command Registration**: Operations are registered as lambda functions
+2. **Serialization Deferral**: Object serialization happens at execution time
+3. **Context Integration**: All operations go through RedisContext for consistency
+4. **Exception Safety**: Proper parameter validation and error handling
 
-### Registration Flow
-1. `AddDatabaseSizeCollectors()` registers the `HostedService` with the specified timing settings
-2. Registry methods from extension packages register individual collectors as singletons implementing `IDatabaseSizeCollector`
-3. At runtime, the `HostedService` resolves all collectors via `IServiceProvider.GetServices<IDatabaseSizeCollector>()`
+#### ResultReader Pattern
 
-## Testing Strategy
+The `ResultReader` class provides centralized deserialization with error handling:
 
-### Test Structure
-Common tests are in `Tests\CommonTests\`:
+- **Deserialization**: Converts Redis byte arrays to typed objects
+- **Error Logging**: Logs deserialization failures with full context
+- **Corrupted Key Cleanup**: Automatically deletes keys that fail deserialization
+- **Null Handling**: Returns null for missing Redis values without logging errors
 
-#### Threading Infrastructure Tests
-- **PeriodicWorkTests.cs**: Comprehensive testing of PeriodicWork implementation with 17 test methods covering:
-  - Constructor behavior and interface implementation
-  - Event subscription and multiple subscriber scenarios
-  - Exception handling and continuation after errors
-  - Cancellation token support and timing behavior
-  - Start/Stop lifecycle and resource disposal
-  - Timer disposal behavior and restart prevention
-  - Timing accuracy verification with tolerance for system variations
+```csharp
+public class ResultReader : IResultReader
+{
+    private readonly ILogger _logger;
 
-#### Database Size Collectors Tests
-Located in `Infrastructure\DatabaseSizeCollectors\`:
-- **HostedServiceTests.cs**: Non-generic hosted service testing with multiple collectors and timing scenarios
-- **DatabaseSizeCollectorsRegistryTests.cs**: Registry pattern and fluent interface testing
-- **ServiceCollectionExtensionsTests.cs**: Service registration, dependency injection, and integration testing
-- **DatabaseSizeCollectorsSettingsTests.cs**: Settings class validation and immutability testing
-- **TestLogger.cs**: Shared test logger implementation for unit tests
+    public TType? Read<TType>(IRedisContext context, IRedisSerializer serializer, RedisKey key, Task<RedisValue> task)
+    {
+        if (task.Result.IsNull)
+            return null;
 
-Extension package tests are in separate projects:
-- `Tests\SQLTests\` - SQL Server collector tests
-- `Tests\RedisTests\` - Redis collector tests
+        try
+        {
+            return serializer.Deserialize<TType>(task.Result!);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error deserializing key {key}", key);
+            context.Database.KeyDelete(key);
+            return null;
+        }
+    }
+}
+```
 
-### Key Testing Challenges
-1. **Timing-Dependent Tests**: PeriodicWork and background services require careful synchronization and tolerance handling
-2. **Internal Classes**: Many classes are internal, requiring reflection for testing
-3. **Collection-based Architecture**: Tests must handle multiple collectors and their interactions
-4. **Registry Pattern Testing**: Fluent interface and service registration validation
-5. **Event-Based Architecture**: Testing event subscription, multiple subscribers, and event timing
-6. **Resource Disposal**: Testing proper disposal patterns and lifecycle management
-7. **Database Connections**: Tests handle both successful and failed connection scenarios
-8. **Service Registration Behavior**: Testing "first wins" behavior and empty collection scenarios
+#### Collections Factory Architecture
 
-### Mock Strategy
-- **NSubstitute** for interface mocking
-- **TestLogger<T>** implementations instead of mocking ILogger (due to internal class constraints)
-- **Reflection** for testing internal class behavior and private fields
-- **TaskCompletionSource** for synchronization in timing-sensitive tests
-- **Multiple Collector Scenarios** for testing collection-based execution
+- **Registration Pattern**: Explicit registration during startup, fast retrieval at runtime
+- **Named Registrations**: Support for multiple registrations of the same type with different configurations using optional name parameter (defaults to "default")
+- **Partial Class Organization**: Split into 5 files for maintainability
+- **Builder Caching**: Thread-safe caching using `ConcurrentDictionary` with keys combining type information and registration name
+- **Validation**: Prevents duplicate registration for the same type+name combination and enforces registration-before-use
 
-## Code Coverage Notes
+#### Step Builder Pattern
 
-### Challenging Areas
-- **HostedService execution**: Testing multiple collectors and error isolation
-- **Registry fluent interface**: Ensuring proper service registration patterns
-- **Settings validation**: Testing immutability and constructor parameter validation
-- **Service registration behavior**: Testing "first wins" behavior and empty collection scenarios
+All builders implement a step-by-step configuration pattern:
 
-### Coverage Strategy
-- Use mock collectors for testing hosted service behavior
-- Test empty collector collections and multiple collector scenarios
-- Design tests to cover both success and failure paths
-- Use reflection to verify private field initialization
-- Test service registration edge cases (multiple calls, empty registries)
+- **Type Safety**: Compile-time enforcement of configuration order
+- **Required Configuration**: Each step returns the next step interface
+- **Fluent API**: Natural, readable configuration syntax
+- **Signature Serialization**: `WithSignaturedSerializer` method on all builders
 
-### Testing Best Practices
-- **Avoid Over-Engineering**: Don't create excessive tests for simple classes. A basic immutable data class with 3 properties doesn't need 25+ tests
-- **Focus on Core Functionality**: Write comprehensive tests for complex business logic, algorithms, and state management
-- **Essential Coverage Only**: For simple classes, test main functionality with various parameters, null/edge cases, and boundary conditions
-- **Quality over Quantity**: 8 meaningful tests are better than 25 redundant tests that test obvious behaviors
-- **Practical Testing**: Test what matters - constructor parameter handling, core methods, error scenarios. Skip testing compiler-enforced behaviors like readonly properties
-- **Use Standard xUnit Assertions**: Use standard xUnit assertions like `Assert.NotNull()`, `Assert.Equal()`, `Assert.Throws<T>()` instead of FluentAssertions library for consistency and simplicity
+#### Exception Handling Strategy
 
-## Dependencies
+The library uses a **dual-exception strategy** to distinguish between infrastructure failures and business logic conflicts:
 
-### Core Dependencies
-- **Microsoft.Extensions.Hosting**: Background service support
-- **Microsoft.Extensions.DependencyInjection**: Service registration
-- **Microsoft.Extensions.Logging**: Logging infrastructure
+**RedisStackExchangeException (Infrastructure Layer):**
+- Wraps ALL exceptions originating from StackExchange.Redis library calls
+- Thrown by: `ExecuteBatch()`, `CommitIndividually()`, `CommitTransactional()` (on ExecuteAsync failures only)
+- Indicates: Redis connection issues, network timeouts, server errors
+- Consumer action: Implement retry logic, circuit breakers, or fallback strategies
 
-### Extension Package Dependencies
-- **Microsoft.Data.SqlClient**: (SQL package) SQL Server connectivity
-- **StackExchange.Redis**: (Redis package) Redis connectivity
+**RedisConflictException (Business Logic Layer):**
+- Thrown when transaction conditions fail (optimistic concurrency violations)
+- Thrown by: `CommitTransactional()` when `ExecuteAsync()` returns false
+- **NOT wrapped** in RedisStackExchangeException
+- Indicates: Version mismatches, key exists/not exists condition failures
+- Consumer action: Reload fresh data and retry with updated version
 
-### Test Dependencies
-- **xUnit**: Testing framework with standard assertions (`Assert.Equal()`, `Assert.NotNull()`, etc.)
+**Implementation in RedisContext:**
+```csharp
+private async Task CommitTransactional()
+{
+    var transaction = _db.CreateTransaction();
+
+    foreach (var condition in _conditions)
+        transaction.AddCondition(condition);
+
+    foreach (var action in _actions)
+        _ = action(transaction);
+
+    bool committed;
+
+    try
+    {
+        committed = await transaction.ExecuteAsync();
+    }
+    catch (Exception ex)
+    {
+        throw new RedisStackExchangeException(ex.Message, ex);  // ✓ Wrap StackExchange errors
+    }
+
+    if (!committed)
+        throw new RedisConflictException($"Redis transaction failed - VersionConflict");  // ✓ NOT wrapped
+}
+```
+
+**Benefits:**
+- Clear separation between transient infrastructure issues and deterministic business conflicts
+- Enables targeted error handling strategies
+- Infrastructure failures can trigger circuit breakers
+- Business conflicts can trigger optimistic retry logic
+
+### Database Operations - Testing
+
+**Location:** `Tests/Database/` (696+ tests)
+
+#### Test Suites
+
+- **RedisContextTests.cs**: 30 tests covering context lifecycle, transactions, batching, exception wrapping
+- **ReadResultTests.cs**: 7 tests covering asynchronous result handling with private field access via reflection
+- **StringAdapterTests.cs**: 24 tests covering Redis string operations including immediate (`TryGet`) and deferred (`TryRead`) patterns
+- **HashsetAdapterTests.cs**: 26 tests covering Redis hash operations including immediate (`TryGetField`) and deferred (`TryReadField`) patterns
+- **StreamAdapterTests.cs**: 21 tests covering Redis Streams functionality
+- **ResultReaderTests.cs**: 16 tests covering deserialization and error handling
+- **EntityCollectionTests.cs**: 30 tests covering cache operations including immediate retrieval with expiration extension
+- **ConcurrentEntityCollectionTests.cs**: 39 tests covering optimistic concurrency, execution order, and immediate retrieval patterns
+- **ChildEntityCollectionTests.cs**: Tests covering hierarchical collections with immediate (`TryGetChild`) and deferred (`TryReadChild`) patterns
+- **BackgroundExpirationUpdaterTests.cs**: 26 tests covering time-based scheduling, half-life optimization, and thread-safety
+- **Factory Tests**: Comprehensive coverage including `WithSignaturedSerializer`, defensive type checking, and named registration patterns (56 tests total)
+- **Builder Tests**: Complete coverage for all collection types
+- **Step Builder Tests**: Complete coverage for all serializer steps
+
+#### Key Testing Areas
+
+1. **Constructor Validation**: Parameter null checks with ArgumentNullException
+2. **Deferred Execution**: Command registration without immediate serialization (TryRead patterns)
+3. **Immediate Execution**: Direct database operations without batching (TryGet patterns)
+4. **Context Integration**: Verifying proper AddCommand/AddBatch calls
+5. **ReadResult Behavior**: Async task handling with private field access via reflection
+6. **Collection Logic**: Deduplication, version management, expiration, execution order
+7. **Streams Integration**: Consumer groups, message ordering, acknowledgments
+8. **Factory Defensive Testing**: Type safety checks using reflection to simulate internal state corruption
+9. **Expiration Update Behavior**: Last-write-wins semantics in BackgroundExpirationUpdater
+10. **Named Registrations**: Multiple registrations of same types with different names, name-based retrieval, duplicate name validation
+
+### Database Operations - Recent Work
+
+#### Architecture Evolution
+
+- **Operations Layer Elimination**: Moved RedisStreamAdapter operations directly into adapter
+- **ResultReader Integration**: Added centralized deserialization with error handling
+- **Direct Database Integration**: StreamAdapter tests mock IDatabase directly
+
+#### Builder Pattern Implementation
+
+- **Step Builders**: Implemented for all collection types and streams
+- **Signature Serialization**: Added `WithSignaturedSerializer` to all builders
+- **Type Safety**: Compile-time enforcement of configuration order
+- **XML Documentation**: Complete documentation on all builder step interfaces
+  - EntityCollectionBuilderSteps: 3 steps
+  - ConcurrentEntityCollectionBuilderSteps: 5 steps
+  - ChildEntityCollectionBuilderSteps: 6 steps
+  - StreamAdapterBuilderSteps: 3 steps
+
+#### Collections Factory
+
+- **Registration Pattern**: Explicit registration with builder caching
+- **Partial Class Split**: 5 files for better organization
+- **Performance Optimization**: Cached builders for fast runtime retrieval
+
+#### Comprehensive Logging
+
+- **RedisStreamAdapter**: Debug/Trace/Warning/Error levels throughout
+- **Performance Awareness**: Appropriate log levels for high-frequency operations
+- **Context Preservation**: All logs include operational context
+
+#### Immediate Execution Pattern (TryGet/TryGetField/TryGetChild)
+
+- **StringAdapter.TryGet**: Added immediate execution method that bypasses batching
+- **HashsetAdapter.TryGetField**: Added immediate field retrieval without deferred execution
+- **EntityCollection.TryGet**: Immediate entity retrieval with optional expiration extension
+- **ConcurrentEntityCollection.TryGet**: Immediate retrieval with version management
+- **ChildEntityCollection.TryGetChild**: Immediate child entity retrieval
+- **XML Documentation**: Complete documentation on all interfaces following established guidelines
+- **Comprehensive Testing**: 49 new tests covering all immediate execution patterns
+  - StringAdapter: 8 tests for TryGet
+  - HashsetAdapter: 9 tests for TryGetField
+  - EntityCollection: 10 tests for TryGet
+  - ConcurrentEntityCollection: 10 tests for TryGet
+  - ChildEntityCollection: 12 tests for TryGetChild
+
+#### ReadResult API Changes
+
+- **ReadResult.Task Field**: Changed from public property to private field for proper encapsulation
+- **Test Infrastructure**: Added reflection-based `GetTask<T>` helper methods in all affected test files
+- **Pattern**: `typeof(ReadResult<T>).GetField("_task", BindingFlags.NonPublic | BindingFlags.Instance)`
+- **Files Updated**: 6 test files fixed (30 compilation errors resolved)
+
+#### ConcurrentEntityCollection Execution Order
+
+- **SetVersion Before SetField**: Changed execution order in `Set()` method for consistency
+- **Version Command Index**: Now executes first (index 1) before entity serialization
+- **Expiration Command Index**: Now executes last (index 2) after all entity operations
+- **Tests Updated**: Fixed 6 tests to reflect new command execution order
+
+#### BackgroundExpirationUpdater Behavior Change
+
+- **Removed _alreadyTouchedKeys**: Eliminated HashSet tracking for first-write-wins behavior
+- **Last-Write-Wins Semantics**: Multiple calls with same key now update the value
+- **ConcurrentDictionary.AddOrUpdate**: Direct usage for simpler, more predictable behavior
+- **Tests Updated**: 7 tests modified to expect last-write-wins behavior instead of first-write-wins
+
+#### Factory Defensive Type Checking
+
+- **Type Safety Tests**: Added defensive tests for all factory methods
+- **Reflection-Based Testing**: Simulate internal state corruption to verify error handling
+- **Files Updated**: 4 factory test files with defensive type check tests
+  - RedisCollectionsFactoryCreateChildEntityCollectionTests
+  - RedisCollectionsFactoryCreateStreamAdapterTests
+  - RedisCollectionsFactoryCreateEntityCollectionTests
+  - RedisCollectionsFactoryCreateConcurrentEntityCollectionTests
+
+#### PriorityQueueScheduler Sliding Expiration Implementation
+
+- **Architecture Change**: Moved from boolean `Accessed` flag to `DateTime? LastAccess` timestamp for precise sliding window expiration
+- **Sliding Expiration Calculation**: New `GetSlidingExpiration()` method calculates remaining TTL: `Expiration - (referenceTime - LastAccess)`
+- **Behavioral Changes**:
+  - `ScheduleOrUpdate()` now sets `LastAccess = DateTime.UtcNow` to track when key was last accessed
+  - `GetScheduleds()` returns sliding expiration value that decreases over time as key ages
+  - Keys re-scheduled with `LastAccess = null` after first processing to enable cleanup detection
+  - Supports negative expirations when elapsed time exceeds original TTL (implementation doesn't prevent this)
+- **Memory Management**: Keys with `LastAccess = null` are removed on next processing cycle if not re-accessed
+- **Test Coverage**: 27 comprehensive tests (all passing) covering:
+  - Sliding expiration calculations with various elapsed times
+  - Edge cases including zero elapsed time, large elapsed time, and negative expirations
+  - LastAccess state transitions (set → null → removed)
+  - Memory leak prevention with cleanup verification
+  - Thread-safety and concurrent access patterns
+
+#### PriorityQueueScheduler Testability Improvements
+
+- **Time Injection**: `GetScheduleds()` now accepts `DateTime referenceTime` parameter instead of using `DateTime.UtcNow` internally
+- **Deterministic Testing**: Tests now inject specific times for predictable, reproducible results
+- **Eliminated Thread.Sleep()**: Removed all `Thread.Sleep()` calls from tests by controlling time through method parameters (except one comparative timing test)
+- **Reduced Reflection**: Removed reflection-based time manipulation helpers
+  - Removed: `ClearPriorityQueue`, `EnqueueToPriorityQueue`, `GetExpiration`, `GetAccessed`
+  - Kept: `GetScheduledExpirations`, `GetScheduledUpdates`, `GetPriorityQueueCount` (for memory leak verification only)
+- **Cleaner Tests**: More maintainable tests that don't rely on timing-sensitive operations
+- **Production Code**: `BackgroundExpirationUpdater` passes `DateTime.UtcNow` to `GetScheduleds()`
+- **Test Pattern**: Tests call `GetScheduleds()` with specific past/future times relative to scheduling time
+- **Documentation**: Added comment explaining remaining reflection helpers are only for internal cleanup verification
+
+#### Named Registrations Support
+
+- **Optional Name Parameter**: All factory Register/Get methods now accept optional `name` parameter (defaults to "default")
+- **Use Cases**: Enables multiple registrations of the same type with different configurations (e.g., different key spaces, serializers, or TTLs)
+- **Key Generation**: Internal builder keys combine type information with registration name using format `{TypeInfo}#{name}`
+- **Enhanced Error Messages**: Exception messages now include the registration name for clarity
+- **XML Documentation**: Complete documentation on all Register/Get method name parameters
+- **Comprehensive Testing**: 16 new tests covering named registration scenarios
+  - Registering multiple collections with different names (4 tests)
+  - Retrieving correct collection by name (4 tests)
+  - Duplicate name validation (4 tests)
+  - Unregistered name error handling (4 tests)
+- **Defensive Test Fixes**: Updated reflection-based defensive tests to pass "default" name parameter
+
+#### Exception Handling Implementation
+
+- **RedisStackExchangeException**: New exception type that wraps all StackExchange.Redis library exceptions
+- **Purpose**: Provides clear distinction between Redis infrastructure failures and application-layer errors
+- **Implementation Locations**:
+  - `RedisContext.ExecuteBatch()`: Wraps batch execution failures
+  - `RedisContext.CommitIndividually()`: Wraps individual command execution failures
+  - `RedisContext.CommitTransactional()`: Wraps transaction `ExecuteAsync()` failures only
+- **RedisConflictException Preservation**: Business logic conflicts are NOT wrapped - thrown directly for targeted handling
+- **Test Coverage**: 3 new tests in RedisContextTests covering exception wrapping scenarios
+- **Documentation**: Comprehensive exception handling guide added to Database/README.md with:
+  - Exception type descriptions and use cases
+  - Exception hierarchy diagram
+  - Comprehensive error handling patterns
+  - Circuit breaker and retry logic examples
+  - Best practices for monitoring and logging
+
+---
+
+## Feature: Database Size Collectors
+
+**Location:** `DatabaseSizeCollectors\` namespace
+
+Provides Redis keyspace metrics collection for monitoring.
+
+### Database Size Collectors - Key Components
+
+- **RedisSizeCollector**: Implements `IDatabaseSizeCollector` to collect Redis keyspace metrics
+- **RedisSizeCollectorSettings**: Configuration for collector settings
+- **ServiceCollectionExtensions**: Fluent registration with Common library
+
+### Database Size Collectors - Architecture
+
+#### Collection Process
+
+1. Execute Redis `INFO KEYSPACE` command
+2. Parse response to extract database-specific metrics
+3. Report metrics via `IDatabaseMetricsConnector`
+
+#### INFO Keyspace Parsing
+
+**Expected Format:**
+```
+# Keyspace
+db0:keys=100,expires=50,avg_ttl=3600000
+```
+
+**Parsing Logic:**
+1. Split response into lines
+2. Find lines starting with "db" + number + colon
+3. Extract database number and compare with `IDatabase.Database`
+4. Parse key-value pairs (keys, expires, avg_ttl)
+5. Report `keys` and `expires` metrics (skip avg_ttl)
+
+**Edge Cases Handled:**
+- Empty or null responses
+- Missing database entries
+- Invalid number formats
+- Malformed lines
+- Extra colons in metric names
+- Whitespace around values
+
+#### Configuration
+
+```csharp
+public class RedisSizeCollectorSettings
+{
+    public RedisSizeCollectorSettings(
+        IDatabase database,
+        string collectorName,
+        IDatabaseMetricsConnector metrics);
+}
+```
+
+#### Collected Metrics
+
+- **{CollectorName}.keys** - Total key count
+- **{CollectorName}.expires** - Keys with expiration set
+
+### Database Size Collectors - Testing
+
+**Location:** `Tests/DatabaseSizeCollectors/` (74 tests)
+
+#### Test Suites
+
+- **RedisSizeCollectorTests.cs**: 66 comprehensive tests covering all scenarios
+- **RedisSizeCollectorSettingsTests.cs**: Settings validation tests
+- **ServiceCollectionExtensionsTests.cs**: DI registration tests
+
+#### Key Testing Areas
+
+1. **Constructor Validation**: Parameter null checks
+2. **Collect Method Success**: Various INFO responses
+3. **Edge Cases**: Empty responses, malformed data
+4. **Error Scenarios**: Connection failures, parsing errors
+5. **Integration-like Tests**: Mock Redis interactions
+
+### Database Size Collectors - Recent Work
+
+- **Complete Test Suite**: 66 RedisSizeCollector tests
+- **FluentAssertions Removal**: Migrated to standard xUnit assertions
+- **Bug Fixes**: Fixed parsing edge cases (colons, whitespace)
+- **Documentation**: Created comprehensive README with examples
+
+---
+
+## Feature: Cache Proxy
+
+**Location:** `CacheProxy\` namespace
+
+Provides a generic caching abstraction layer with adapter patterns for different Redis data structures.
+
+### Cache Proxy - Key Components
+
+#### Core Classes
+
+- **CacheProxy<TKey, TEntity>**: Generic cache proxy implementation that delegates to adapters
+- **ICacheProxyKey**: Interface for cache keys with unique string representation
+- **IVersionedEntity**: Interface for entities with version tracking
+
+#### Adapters
+
+- **ICacheProxyAdapter<TKey, TEntity>**: Interface for cache storage adapters
+- **HashsetCacheProxyAdapter**: Adapter using Redis hashes for storage with version field management
+- **IHashetFieldsAdapter**: Interface for managing hash fields and version fields
+- **HashetFieldsAdapter**: Implementation handling root fields and version field creation/parsing/truncation
+
+#### Factory Pattern
+
+- **ICacheProxyFactory**: Factory interface for creating cache proxy instances
+- **CacheProxyFactory**: Implementation that creates cache proxies with automatic type signature validation
+
+### Cache Proxy - Architecture
+
+#### Cache Proxy Pattern
+
+The `CacheProxy<TKey, TEntity>` class provides a simple, generic interface for caching operations:
+
+```csharp
+public class CacheProxy<TKey, TEntity> : ICacheProxy<TKey, TEntity>
+    where TKey : ICacheProxyKey
+    where TEntity : class
+{
+    public void StoreCopy(TKey key, TEntity? entity);
+    public void StoreCopies(IEnumerable<KeyValuePair<TKey, TEntity?>> entries);
+    public Task<TEntity?> ReadCopy(TKey key);
+    public Task<Dictionary<TKey, TEntity?>> ReadCopies(params TKey[] keys);
+    public void Remove(TKey key);
+    public void RemoveMany(params TKey[] keys);
+}
+```
+
+**Key Design Decisions:**
+- **Adapter Delegation**: All operations delegate to the configured adapter
+- **Batch Operations**: StoreCopies uses a single batch for multiple entries
+- **Database Integration**: Gets default database and creates batches per operation
+- **Null Support**: Handles null entities gracefully throughout
+
+#### Hashset Adapter Implementation
+
+The `HashsetCacheProxyAdapter` uses Redis hashes to store entities with versioning support:
+
+**Storage Format:**
+- **root field**: Serialized entity bytes
+- **v-{version} fields**: Version tracking fields (one per version)
+
+**Version Field Management:**
+1. **Creation**: When storing versioned entities, creates a version field `v-{Version}`
+2. **Parsing**: Reads all version fields and tracks the maximum version
+3. **Truncation**: When version field count reaches capacity (10), deletes oldest versions
+
+**Read Logic:**
+1. Execute `HashGetAll` for all requested keys
+2. Parse fields to extract bytes and max version
+3. Deserialize entity from bytes
+4. For versioned entities, validate entity version >= max version
+5. If version mismatch or deserialization fails, remove the key
+
+**Error Handling:**
+- **MismatchSignatureException**: Logs warning and removes key (schema change detected)
+- **General Exception**: Logs error and removes key (corrupted data)
+- **Parse Failures**: Skips key silently (missing or invalid data)
+
+#### Fields Adapter Architecture
+
+The `HashetFieldsAdapter` manages hash field creation and parsing:
+
+**Constants:**
+- `_rootField`: "root" - Field name for serialized entity
+- `_versionFieldPrefix`: "v" - Prefix for version fields
+- `_versionFieldsCapacity`: 10 - Maximum version fields before truncation
+
+**GetFields Method:**
+- Returns root field with serialized bytes
+- For versioned entities, adds version field `v-{version}` with version value
+
+**TryParseFields Method:**
+- Iterates all fields
+- Extracts root field bytes
+- Tracks version fields and calculates max version
+- Returns true only if root field with non-null bytes exists
+
+**TryTruncateVersionFields Method:**
+- Only truncates when count >= capacity
+- Deletes oldest versions: `count - capacity/2`
+- Orders by version value (oldest first)
+- Uses `HashDelete` with field names array
+
+#### Cache Proxy Factory Architecture
+
+The `CacheProxyFactory` provides a centralized factory for creating cache proxy instances with built-in signature validation:
+
+**Automatic Signature Validation:**
+- All cache proxies created by the factory automatically wrap the provided serializer with `RedisSerializerSignatureDecorator`
+- This ensures schema changes are detected during deserialization without requiring explicit configuration
+- Uses SHA256 hash generation via TypeSignature library for signature creation
+
+**Factory Method:**
+```csharp
+public ICacheProxy<TKey, TEntity> Create<TKey, TEntity>(
+    string keyPrefix,
+    IRedisSerializer serializer,
+    TimeSpan expiration,
+    string rootField = "root",
+    string versionFieldPrefix = "v",
+    short versionFieldsCapacity = 10)
+    where TKey : ICacheProxyKey
+    where TEntity : class
+```
+
+**Implementation Details:**
+1. Wraps user-provided serializer with signature validation decorator
+2. Creates `HashetFieldsAdapter` with specified field configuration
+3. Creates `HashsetCacheProxyAdapter` with decorated serializer
+4. Returns configured `CacheProxy<TKey, TEntity>` instance
+
+**Benefits:**
+- **Zero Configuration**: Signature validation is automatic for all cache proxies
+- **Consistency**: All cached entities use the same signature validation approach
+- **Error Prevention**: Schema changes are caught at deserialization time with clear error messages
+
+### Cache Proxy - Testing
+
+**Location:** `Tests/CacheProxy/` (65 tests)
+
+#### Test Suites
+
+- **CacheProxyTests.cs**: 34 tests covering proxy orchestration
+  - Constructor validation
+  - StoreCopy/StoreCopies operations
+  - ReadCopy/ReadCopies with various scenarios
+  - Remove/RemoveMany operations
+  - Database and batch interaction verification
+
+- **HashsetCacheProxyAdapterTests.cs**: 31 tests covering adapter implementation
+  - Store operations with entities and null values
+  - Read operations with success scenarios
+  - Version validation (matching, higher, lower versions)
+  - Exception handling (MismatchSignature, general exceptions)
+  - Parse failure handling
+  - Remove operations
+  - TryTruncateVersionFields integration
+
+- **HashetFieldsAdapterTests.cs**: 37 tests covering field management
+  - Constructor validation
+  - GetFields for versioned/non-versioned entities
+  - GetFields with null handling
+  - TryParseFields success cases (root only, with versions, multiple versions)
+  - TryParseFields failure cases (no root, null root, empty fields)
+  - TryTruncateVersionFields capacity management
+  - TryTruncateVersionFields correct deletion of oldest versions
+
+#### Key Testing Areas
+
+1. **Adapter Delegation**: Verifying CacheProxy delegates to adapters correctly
+2. **Batch Management**: Single batch for StoreCopies, new batch per ReadCopies
+3. **Version Logic**: Version comparison and key removal on mismatch
+4. **Field Parsing**: Correct extraction of root and version fields
+5. **Truncation Logic**: Deletion of oldest versions when capacity reached
+6. **Error Scenarios**: Exception handling and key cleanup
+7. **Null Handling**: Proper support for null entities throughout
+
+### Cache Proxy - Recent Work
+
+#### Factory Implementation with Automatic Signature Validation
+
+- **CacheProxyFactory**: Implemented factory pattern for cache proxy creation
+- **GetSignaturedSerializer Method**: Private method that wraps serializers with signature validation
+- **Automatic Protection**: All cache proxies now include schema change detection by default
+- **XML Documentation**: Complete documentation on `ICacheProxyFactory` interface explaining automatic signature validation
+
+#### Workbench Restructuring
+
+- **Scenario Pattern**: Restructured Workbench to match Kafka Workbench architecture
+- **IScenario Interface**: Added common interface for all scenarios with Start/Stop methods
+- **StartupHostedService**: Implemented hosted service for scenario lifecycle management
+- **Two Scenarios Implemented**:
+  - **RedisDatabaseScenario**: Tests entity collections, child collections, and database operations
+  - **RedisCacheProxyScenario**: Tests cache proxy functionality with versioned entities
+- **Shared Components**: Moved common types (Person, Address, PersonKey, JsonRedisSerializer) to `Scenarios/Shared/`
+- **RedisDBContext**: Moved to `Scenarios/RedisDatabase/` as scenario-specific component
+- **Interactive Selection**: Program.cs prompts user to select scenario at startup
+
+---
+
+## Cross-Cutting Concerns
+
+### Logging Strategy
+
+All components implement structured logging with Microsoft.Extensions.Logging:
+
+- **Debug Level**: Method entry, operations, processing details
+- **Trace Level**: Individual operations, completions
+- **Warning Level**: Conflicts, deserialization failures
+- **Error Level**: Critical failures, exceptions, cleanup
+
+**Best Practices:**
+- Structured data with named parameters
+- Context preservation (keys, IDs, names)
+- Performance awareness for high-frequency operations
+- Complete exception context
+
+### Testing Requirements
+
+**Standardized Across All Features:**
+
+- **NO FluentAssertions**: Use only standard xUnit assertions
+- **NO Over-engineering**: Focus on core functionality
+- **100% Coverage**: Comprehensive line and branch coverage
+- **Simple Patterns**: Clear, readable tests
+
+**Assertion Patterns:**
+```csharp
+// ✅ Standard xUnit assertions
+Assert.NotNull(result);
+Assert.Equal(expected, actual);
+Assert.True(condition);
+Assert.Throws<ArgumentNullException>(() => method());
+
+// ❌ Avoid FluentAssertions
+// result.Should().NotBeNull();
+```
+
+**Mock Strategy:**
+- **NSubstitute** for all interfaces
+- **RedisResult.Create()** for simulating responses
+- **Unsafe Code** for StreamGroupInfo in tests
+- **TestLogger<T>** for internal class constraints
+
+**Reflection Avoidance:**
+
+Reflection should be **avoided in unit tests** whenever possible. Tests using reflection are brittle, harder to maintain, and often indicate a design issue.
+
+**Guidelines:**
+
+1. **Prefer Dependency Injection & Mocking**: Mock dependencies instead of accessing private state
+   ```csharp
+   // ❌ BAD: Using reflection to check internal state
+   var field = typeof(MyClass).GetField("_internalState", BindingFlags.NonPublic | BindingFlags.Instance);
+   var state = field.GetValue(instance);
+   Assert.Equal(expectedState, state);
+
+   // ✅ GOOD: Mock dependencies and verify interactions
+   _mockDependency.Received(1).ExpectedMethod(expectedArgs);
+   ```
+
+2. **Use Event Capturing**: For event-driven code, capture event handlers instead of using reflection
+   ```csharp
+   // ❌ BAD: Using reflection to invoke private event handlers
+   var method = typeof(MyClass).GetMethod("OnEventTriggered", BindingFlags.NonPublic);
+   method.Invoke(instance, null);
+
+   // ✅ GOOD: Capture and invoke event handlers naturally
+   AsyncEventHandler? capturedHandler = null;
+   _eventSource.OnTrigger += Arg.Do<AsyncEventHandler>(h => capturedHandler = h);
+   var instance = new MyClass(_eventSource);
+   await capturedHandler!(); // Trigger naturally
+   ```
+
+3. **Refactor for Testability**: If tests require reflection, consider refactoring the production code
+   - Extract complex logic into separate classes with interfaces
+   - Use dependency injection for better isolation
+   - Make internal state observable through interfaces or events
+   - Consider if private methods should be internal with `[InternalsVisibleTo]`
+
+**When Reflection is Acceptable:**
+
+Reflection is acceptable ONLY when:
+- Testing framework-specific behavior (e.g., serialization/deserialization)
+- Testing defensive code paths that check internal state corruption (factory type safety tests)
+- No reasonable alternative exists and the reflection usage is well-documented
+
+**Example Refactoring:**
+
+**Before (requires reflection):**
+```csharp
+class BackgroundUpdater {
+    private readonly Scheduler _scheduler = new();
+
+    public void Update(string key) {
+        _scheduler.Schedule(key);
+    }
+}
+
+// Test requires reflection to verify _scheduler state
+[Fact]
+public void Test() {
+    var updater = new BackgroundUpdater();
+    updater.Update("key");
+
+    var field = typeof(BackgroundUpdater).GetField("_scheduler", ...);
+    var scheduler = field.GetValue(updater);
+    // Check scheduler state via reflection...
+}
+```
+
+**After (no reflection needed):**
+```csharp
+class BackgroundUpdater {
+    private readonly IScheduler _scheduler;
+
+    public BackgroundUpdater(IScheduler scheduler) {
+        _scheduler = scheduler;
+    }
+
+    public void Update(string key) {
+        _scheduler.Schedule(key);
+    }
+}
+
+// Test uses mocking - no reflection
+[Fact]
+public void Test() {
+    var mockScheduler = Substitute.For<IScheduler>();
+    var updater = new BackgroundUpdater(mockScheduler);
+
+    updater.Update("key");
+
+    mockScheduler.Received(1).Schedule("key"); // Clean verification
+}
+```
+
+**Recent Examples:**
+- `BackgroundExpirationUpdaterTests`: Refactored to inject `IPriorityQueueScheduler<RedisKey>` dependency instead of accessing private `_scheduler` field via reflection
+- `SchedulerPriorityQueueTests`: Refactored to inject time via `GetScheduleds(DateTime referenceTime)` parameter instead of using reflection to manipulate internal priority queue timing
+- Event handler capturing: Changed from reflection-based method invocation to natural event triggering via `AsyncEventHandler` capture
+
+### Dependencies
+
+#### External Packages
+
+- **StackExchange.Redis**: Redis connectivity and commands
+- **BlueBrown.Sportsbook.Common**: Core infrastructure interfaces
+- **TypeSignature**: For signature serialization decorator
+
+#### Test Dependencies
+
 - **NSubstitute**: Mocking framework
-- **Note**: FluentAssertions is not used - prefer standard xUnit assertions for consistency
+- **xUnit**: Testing framework
+- **Unsafe Code Support**: AllowUnsafeBlocks enabled
 
-## Build and Test Commands
-- **Build**: Use standard .NET build commands
-- **Tests**: Run with standard test runners
-- **Code Coverage**: Tests are designed for comprehensive coverage of all execution paths
-- **Current Status**: All tests passing across all projects ✅
+---
 
-## Common Issues and Solutions
+## Current Status Summary
 
-### NSubstitute Limitations
-- Cannot mock internal classes - use TestLogger implementations
-- Cannot create proxies for `ILogger<InternalClass>` - use TestLogger<T> instead
-- Be careful with generic type constraints in mock setup
-- Use `Received()` instead of complex argument matchers for reliability
+### Database Operations
+- ✅ Simplified architecture with direct database integration
+- ✅ 696+ total tests with 100% coverage
+- ✅ Immediate and deferred execution patterns (TryGet vs TryRead)
+- ✅ Centralized error handling via ResultReader
+- ✅ Complete builder pattern implementation
+- ✅ Registration-based factory with caching, defensive type checking, and named registrations
+- ✅ Type signature validation support
+- ✅ Comprehensive XML documentation on all interfaces and builder steps
+- ✅ ConcurrentEntityCollection execution order (SetVersion before SetField)
+- ✅ BackgroundExpirationUpdater last-write-wins semantics
+- ✅ ReadResult proper encapsulation with private task field
+- ✅ PriorityQueueScheduler sliding expiration with DateTime? LastAccess
+- ✅ PriorityQueueScheduler testability improvements with time injection
 
-### Service Registration Gotchas
-- Multiple calls to `AddDatabaseSizeCollectors()` keep first configuration only
-- `AddHostedService()` doesn't allow multiple registrations of same implementation type
-- Must use `GetServices<IDatabaseSizeCollector>()` not `GetRequiredService<IReadOnlyCollection<IDatabaseSizeCollector>>()`
-- Empty collector collections are valid and handled gracefully
+### Database Size Collectors
+- ✅ Production-ready keyspace monitoring
+- ✅ 74 comprehensive tests
+- ✅ INFO keyspace parsing with edge case handling
+- ✅ Fluent DI registration
+- ✅ Complete feature documentation
 
-### Timing Test Reliability
-- Use TaskCompletionSource for coordination instead of Task.Delay
-- Design tests to be deterministic rather than timing-dependent
-- Accept race conditions in cancellation scenarios where timing is inherently unreliable
-- Properly dispose CancellationTokenSource to avoid ObjectDisposedException
+### Cache Proxy
+- ✅ Generic cache abstraction with adapter pattern
+- ✅ 65 comprehensive tests with 100% coverage
+- ✅ Hashset adapter with version field management
+- ✅ Automatic truncation of old version fields
+- ✅ Error handling with key cleanup
+- ✅ Support for versioned and non-versioned entities
+- ✅ Factory pattern with automatic signature validation
+- ✅ Zero-configuration schema change detection
 
-### Extension Package Testing
-- Database connection tests are in respective extension packages
-- Common package focuses on infrastructure and service registration testing
-- Mock implementations used for testing hosted service behavior
+### Code Quality
+- ✅ Consistent parameter validation across all classes
+- ✅ Pure xUnit assertions (no FluentAssertions)
+- ✅ Structured logging throughout
+- ✅ Partial class organization for maintainability
 
-## Core Package Features
+### Documentation
+- ✅ Root README for library overview
+- ✅ Feature-specific READMEs (Database, DatabaseSizeCollectors)
+- ✅ Complete XML documentation on builder interfaces
+- ✅ CLAUDE.md with organized sections and TOC
 
-The Common package provides:
-
-### Threading Infrastructure
-- **PeriodicWork**: Reusable periodic task execution with event-driven architecture
-- **IPeriodicWork**: Interface for testable periodic work implementations
-- **AsyncEventHandler**: Delegate for asynchronous event handling
-- Proper resource management with IDisposable pattern
-- Exception handling and logging for robustness
-
-### Database Size Collection Infrastructure
-- Core interfaces (`IDatabaseSizeCollector`, `IDatabaseMetricsConnector`, `IDatabaseSizeCollectorsRegistry`)
-- Hosted service infrastructure for background collection
-- Service registration and dependency injection support
-- Fluent configuration API
-- Centralized timing configuration
-- Comprehensive error handling and logging
+---
 
 ## Usage Examples
 
-### PeriodicWork Usage
+### Database Operations - Collections Factory Registration
+
 ```csharp
-// Basic usage
-var logger = serviceProvider.GetRequiredService<ILogger<PeriodicWork>>();
-using var periodicWork = new PeriodicWork(TimeSpan.FromSeconds(5), logger);
+// Startup/DI Configuration (runs once)
+var factory = serviceProvider.GetRequiredService<ICollectionsFactory>();
 
-// Subscribe to periodic events
-periodicWork.OnTick += async () =>
-{
-    Console.WriteLine($"Periodic task executed at {DateTime.Now}");
-    await SomeAsyncWork();
-};
+// Register EntityCollection with standard serializer (default name)
+factory.RegisterEntityCollection<int, User>(steps =>
+    steps.WithKeySpace("users")
+         .WithSerializer(jsonSerializer)
+         .WithDefaultLifetimeProvider(TimeSpan.FromMinutes(5))
+         .WithUniqueKeyFactory(id => id.ToString()));
 
-// Start the periodic execution
-using var cts = new CancellationTokenSource();
-periodicWork.Start(cts.Token);
+// Register EntityCollection with signature validation (default name)
+factory.RegisterEntityCollection<int, Product>(steps =>
+    steps.WithKeySpace("products")
+         .WithSignaturedSerializer(jsonSerializer)  // Automatic schema change detection
+         .WithDefaultLifetimeProvider(TimeSpan.FromMinutes(10))
+         .WithUniqueKeyFactory(id => id.ToString()));
 
-// Stop when needed (disposes timer, prevents restart)
-await periodicWork.Stop();
+// Register multiple EntityCollections with different names for same type
+factory.RegisterEntityCollection<int, User>(steps =>
+    steps.WithKeySpace("users:cache")
+         .WithSerializer(jsonSerializer)
+         .WithDefaultLifetimeProvider(TimeSpan.FromMinutes(60))
+         .WithUniqueKeyFactory(id => id.ToString()), "long-cache");
+
+factory.RegisterEntityCollection<int, User>(steps =>
+    steps.WithKeySpace("users:session")
+         .WithSerializer(jsonSerializer)
+         .WithDefaultLifetimeProvider(TimeSpan.FromSeconds(30))
+         .WithUniqueKeyFactory(id => id.ToString()), "session-cache");
+
+// Register ConcurrentEntityCollection
+factory.RegisterConcurrentEntityCollection<int, Order>(steps =>
+    steps.WithKeySpace("orders")
+         .WithSerializer(jsonSerializer)
+         .WithDefaultLifetimeProvider(TimeSpan.FromMinutes(10))
+         .WithUniqueKeyFactory(id => id.ToString())
+         .WithOldConcurrencyTokenSelector(order => order.Version)
+         .WithNewConcurrencyTokenSelector(order => Guid.NewGuid().ToString()));
+
+// Register ChildEntityCollection
+factory.RegisterChildEntityCollection<int, string, OrderItem>(steps =>
+    steps.WithKeySpace("order-items")
+         .WithChildKeyPrefix("item")
+         .WithSerializer(jsonSerializer)
+         .WithDefaultLifetimeProvider(TimeSpan.FromMinutes(10))
+         .WithUniqueParentKeyFactory(orderId => orderId.ToString())
+         .WithUniqueChildKeyFactory(itemId => itemId));
+
+// Register StreamAdapter with custom name
+factory.RegisterStreamAdapter<OrderEvent>(steps =>
+    steps.WithStreamKey("orders:events")
+         .WithSerializer(jsonSerializer)
+         .WithMaxLength(10000), "order-events");
+
+// Runtime Usage (fast, uses cached builders)
+var context = new RedisContext(database);
+var userCollection = factory.GetEntityCollection<int, User>(context); // default name
+var longCacheUsers = factory.GetEntityCollection<int, User>(context, "long-cache");
+var sessionUsers = factory.GetEntityCollection<int, User>(context, "session-cache");
+var orderCollection = factory.GetConcurrentEntityCollection<int, Order>(context);
+var orderEvents = factory.GetStreamAdapter<OrderEvent>(context, "order-events");
 ```
 
-### Dependency Injection with PeriodicWork
+### Database Size Collectors - Basic Configuration
+
 ```csharp
-// Register in DI container
-services.AddSingleton<IPeriodicWork>(provider =>
-    new PeriodicWork(TimeSpan.FromMinutes(1), provider.GetRequiredService<ILogger<PeriodicWork>>()));
-
-// Use in a service
-public class MyBackgroundService : IHostedService
-{
-    private readonly IPeriodicWork _periodicWork;
-
-    public MyBackgroundService(IPeriodicWork periodicWork)
-    {
-        _periodicWork = periodicWork;
-        _periodicWork.OnTick += DoPeriodicWork;
-    }
-
-    private async Task DoPeriodicWork()
-    {
-        // Your periodic logic here
-    }
-}
+// Register size collectors
+builder.Services.AddDatabaseSizeCollectors(provider =>
+    new DatabaseSizeCollectorsSettings(TimeSpan.FromMinutes(5)))
+    .AddRedisSizeCollector(provider =>
+        new RedisSizeCollectorSettings(
+            database: provider.GetRequiredService<IConnectionMultiplexer>().GetDatabase(0),
+            collectorName: "Redis-Primary",
+            metrics: provider.GetRequiredService<IDatabaseMetricsConnector>()));
 ```
 
-### Database Size Collectors Registration
-```csharp
-// Common package provides core infrastructure
-services.AddDatabaseSizeCollectors(provider =>
-    new DatabaseSizeCollectorsSettings(TimeSpan.FromMinutes(5)));
+### Cache Proxy Factory - Automatic Signature Validation
 
-// Extension packages add specific collectors
-// (requires SQL and Redis package references)
-// .AddSqlSizeCollector(provider => new SqlSizeCollectorSettings(...))
-// .AddRedisSizeCollector(provider => new RedisSizeCollectorSettings(...))
+```csharp
+// Register Cache Proxy services
+builder.Services.AddRedisCacheProxy();
+
+// Get factory and create cache proxy
+var factory = serviceProvider.GetRequiredService<ICacheProxyFactory>();
+
+// Cache proxy creation - signature validation is automatic
+var cacheProxy = factory.Create<PersonKey, Person>(
+    keyPrefix: typeof(Person).FullName!,
+    serializer: new JsonRedisSerializer(),  // Automatically wrapped with signature validation
+    expiration: TimeSpan.FromMinutes(60));
+
+// Store and retrieve entities
+var person = new Person(1, 0, "John Doe");
+var key = new PersonKey { Id = person.Id };
+
+cacheProxy.StoreCopy(key, person);
+var retrieved = await cacheProxy.ReadCopy(key);
+
+// Schema changes are automatically detected during deserialization
+// If Person class structure changes, MismatchSignatureException will be thrown
+// and the corrupted cache entry will be removed
 ```
 
-### Implementing IDatabaseMetricsConnector
-```csharp
-public class MyMetricsConnector : IDatabaseMetricsConnector
-{
-    public void RecordSize(string collectorName, string collectionName, long count)
-    {
-        // Log or send to monitoring system
-        Console.WriteLine($"{collectorName}: {collectionName} = {count}");
-    }
-}
+### Step Builder Pattern - Compile-Time Safety
 
-// Register it
-services.AddSingleton<IDatabaseMetricsConnector, MyMetricsConnector>();
+```csharp
+// ❌ This won't compile (missing steps)
+factory.RegisterEntityCollection<int, User>(steps =>
+    steps.WithKeySpace("users")
+         .WithSerializer(serializer));
+// Error: Cannot convert type 'ISerializerStep<int, User>' to 'IEntityCollectionBuilder<int, User>'
+
+// ✅ Correct usage - all steps required
+factory.RegisterEntityCollection<int, User>(steps =>
+    steps.WithKeySpace("users")              // Returns ISerializerStep
+         .WithSerializer(serializer)          // Returns ILifetimeProviderStep
+         .WithDefaultLifetimeProvider(...)    // Returns IUniqueKeyFactoryStep
+         .WithUniqueKeyFactory(...));         // Returns IEntityCollectionBuilder
 ```
 
-## Extension Packages
+### Workbench - Testing Different Scenarios
 
-### Available Extensions
-- **BlueBrown.Sportsbook.SQL**: SQL Server table row count monitoring
-- **BlueBrown.Sportsbook.Redis**: Redis keyspace monitoring
+The Workbench project provides an interactive testing environment structured similarly to the Kafka Workbench:
 
-### Package Structure
-- **Common**: Core infrastructure, interfaces, hosted service, registry pattern
-- **SQL**: SQL Server-specific collector implementation and configuration
-- **Redis**: Redis-specific collector implementation and configuration
-- **Tests**: Separate test projects for each package
+**Project Structure:**
+```
+Workbench/
+├── Program.cs                              # Entry point with scenario selection
+├── StartupHostedService.cs                 # Hosted service for scenario lifecycle
+├── Scenarios/
+│   ├── IScenario.cs                        # Common interface for all scenarios
+│   ├── Shared/                             # Shared types across scenarios
+│   │   ├── Types.Person.cs                 # Person entity and PersonKey
+│   │   ├── Types.Address.cs                # Address entity
+│   │   └── JsonRedisSerializer.cs          # JSON serializer implementation
+│   ├── RedisDatabase/
+│   │   ├── @Scenario.cs                    # Database operations scenario
+│   │   └── RedisDBContext.cs               # Database context
+│   └── RedisCacheProxy/
+│       └── @Scenario.cs                    # Cache proxy scenario
+```
 
-## Recent Work History
+**Running Scenarios:**
+```bash
+# Start the workbench
+dotnet run --project Workbench
 
-### PeriodicWork Infrastructure Development (2024)
-- **Initial Implementation**: Created event-based periodic execution infrastructure with `IPeriodicWork` interface
-- **Testability Refactor**: Moved from local `PeriodicTimer` to field-level for proper resource management
-- **IDisposable Implementation**: Added proper disposal pattern with `GC.SuppressFinalize(this)`
-- **Stop() Behavior Update**: `Stop()` now disposes timer, preventing restart and allowing normal loop exit
-- **Complete Test Coverage**: 17 comprehensive unit tests covering all scenarios including timing, disposal, and edge cases
-- **Coverage Issue Resolution**: Fixed unreachable code issue (line 47) through architectural improvements
-- **Documentation**: Comprehensive XML documentation and usage examples
+# When prompted, enter scenario name:
+# - "redisdatabase"   - Test entity collections and database operations
+# - "rediscacheproxy" - Test cache proxy with versioned entities
+```
 
-### Database Size Collectors Evolution
-- **Major Architecture Refactor**: Changed from generic `HostedService<TCollector>` to single `HostedService` managing multiple collectors
-- **Registry Pattern Implementation**: Added fluent interface for collector registration
-- **Centralized Settings**: Introduced `DatabaseSizeCollectorsSettings` for timing configuration
-- **Extension Package Structure**: Separated SQL and Redis implementations into extension packages
-- **Complete Test Suite**: Comprehensive test coverage across all packages with proper separation
-- **Service Registration Fixes**: Fixed DI resolution to use `GetServices()` instead of requiring pre-registered collections
-- **Comprehensive Documentation**: Updated all class summaries, XML documentation, and README files
-- **Code Cleanup**: Removed redundant code and improved line coverage
+**Scenario Implementation Pattern:**
+Each scenario implements `IScenario` with:
+- **Start()**: Launches async operations to test the feature
+- **Stop()**: Cleanup operations (if needed)
+- **Configure()**: Static method for DI registration and configuration
+
+This pattern allows for easy addition of new scenarios and provides an isolated testing environment for each feature.
