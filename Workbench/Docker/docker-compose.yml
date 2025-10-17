@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: redis-workbench
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+    networks:
+      - redis-network
+
+  redis-insight:
+    image: redislabs/redisinsight:latest
+    container_name: redis-insight-workbench
+    ports:
+      - "8001:5540"
+    volumes:
+      - redis_insight_data:/db
+    restart: unless-stopped
+    networks:
+      - redis-network
+    depends_on:
+      - redis
+
+volumes:
+  redis_data:
+    driver: local
+  redis_insight_data:
+    driver: local
+
+networks:
+  redis-network:
+    driver: bridge

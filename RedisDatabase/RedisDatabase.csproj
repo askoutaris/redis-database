@@ -1,0 +1,36 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<TargetFramework>net8.0</TargetFramework>
+		<Nullable>enable</Nullable>
+		<LangVersion>Latest</LangVersion>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Authors>Alkiviadis Skoutaris</Authors>
+		<Company>Alkiviadis Skoutaris</Company>
+		<Description>A redis database library</Description>
+		<PackageLicenseExpression>MIT</PackageLicenseExpression>
+		<RepositoryUrl>https://github.com/askoutaris/redis-database</RepositoryUrl>
+		<PackageId>Redis-Database</PackageId>
+		<Version>1.0.0</Version>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="TypeSignature" Version="1.0.1" />
+		<PackageReference Include="StackExchange.Redis" Version="2.9.17" />
+		<PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.3" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<Using Include="Microsoft.Extensions.Logging" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<InternalsVisibleTo Include="Tests" />
+		<InternalsVisibleTo Include="RedisDatabase.Workbench" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<InternalsVisibleTo Include="DynamicProxyGenAssembly2" />
+	</ItemGroup>
+
+</Project>

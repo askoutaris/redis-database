@@ -1,0 +1,25 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<TargetFramework>net8.0</TargetFramework>
+		<Nullable>enable</Nullable>
+		<LangVersion>latest</LangVersion>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Authors>Alkiviadis Skoutaris</Authors>
+		<Company>Alkiviadis Skoutaris</Company>
+		<Description>Extensions for RedisDatabase to be used with Microsoft dependency injection</Description>
+		<PackageLicenseExpression>MIT</PackageLicenseExpression>
+		<RepositoryUrl>https://github.com/askoutaris/redis-database</RepositoryUrl>
+		<PackageId>Redis-Database.Extensions.DependencyInjection</PackageId>
+		<Version>1.0.0</Version>
+	</PropertyGroup>
+
+	<ItemGroup>
+	  <None Include="..\.editorconfig" Link=".editorconfig" />
+	</ItemGroup>
+
+	<ItemGroup>
+	  <ProjectReference Include="..\RedisDatabase\RedisDatabase.csproj" />
+	</ItemGroup>
+
+</Project>
