@@ -1,11 +1,10 @@
-﻿//using Newtonsoft.Json;
+﻿using System.Text.Json;
 
 namespace RedisDatabase.Logging
 {
 	public readonly struct LogData<T>
 	{
-		//private readonly JsonSerializerSettings? _serializerSettings;
-
+		private readonly JsonSerializerOptions? _serializerOptions;
 		public T? Data { get; }
 
 		public LogData(T? data)
@@ -13,18 +12,13 @@ namespace RedisDatabase.Logging
 			Data = data;
 		}
 
-		//public LogData(T? data, JsonSerializerSettings serializerSettings)
-		//{
-		//	_serializerSettings = serializerSettings;
-		//	Data = data;
-		//}
+		public LogData(T? data, JsonSerializerOptions serializerOptions)
+		{
+			_serializerOptions = serializerOptions;
+			Data = data;
+		}
 
 		public override string? ToString()
-		{
-			throw new NotImplementedException();
-			//return _serializerSettings is not null
-			//	? Data?.ToJson(_serializerSettings)
-			//	: Data?.ToJson();
-		}
+			=> JsonSerializer.Serialize(Data, _serializerOptions);
 	}
 }
