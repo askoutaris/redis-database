@@ -1,80 +1,105 @@
-# BlueBrown.Sportsbook.Redis
+# RedisDatabase
 
-Comprehensive Redis integration library for BlueBrown Sportsbook applications.
+A comprehensive Redis integration library providing entity collections, caching, and data persistence with support for both immediate and deferred execution patterns.
 
 ## Overview
 
-This library provides Redis functionality for the BlueBrown.Sportsbook platform, offering multiple features for different use cases:
+RedisDatabase is a .NET library that simplifies working with Redis by providing high-level abstractions for entity management, collections, and data persistence. It includes built-in support for expiration management, optimistic concurrency, hierarchical relationships, and Redis Streams.
 
 ### Features
 
-- **[Database Operations](./Database/README.md)** - Entity caching, collections, streams, and data persistence
-  - Entity Collections with expiration management
-  - Concurrent Collections with optimistic locking
-  - Child/Parent hierarchical relationships
-  - Redis Streams for event processing
-  - **Immediate execution** (TryGet) - Direct database operations without batching
-  - **Deferred execution** (TryRead) - Batched operations for optimal performance
-
-- **[Database Size Monitoring](./DatabaseSizeCollectors/README.md)** - Redis keyspace metrics collection
-  - Keyspace statistics tracking
-  - Integration with Common metrics connector
-  - Scheduled background collection
+- **Entity Collections** - Type-safe entity caching with automatic expiration management
+- **Concurrent Collections** - Optimistic locking for conflict-free concurrent updates
+- **Child/Parent Collections** - Hierarchical entity relationships
+- **Redis Streams** - Event processing and stream operations
+- **Flexible Execution** - Choose between immediate (TryGet) or deferred/batched (TryRead) execution
+- **Background Expiration Updates** - Automatic TTL renewal for active entities
+- **Pluggable Serialization** - Bring your own serializer implementation
 
 ## Installation
 
+### Core Library
 ```bash
-dotnet add package BlueBrown.Sportsbook.Redis
+dotnet add package RedisDatabase
+```
+
+### Dependency Injection Extensions
+```bash
+dotnet add package RedisDatabase.Extensions.DependencyInjection
 ```
 
 **Dependencies:**
-- `BlueBrown.Sportsbook.Common`
-- `StackExchange.Redis`
+- `StackExchange.Redis` (2.8+)
+- `Microsoft.Extensions.Logging.Abstractions`
 
 ## Quick Start
 
-### Database Operations
-
-For entity caching, collections, and Redis operations:
+### Basic Setup with Dependency Injection
 
 ```csharp
-using BlueBrown.Sportsbook.Redis.Database;
+using RedisDatabase;
+using RedisDatabase.Extensions.DependencyInjection;
 using StackExchange.Redis;
 
 // Register Redis connection
 builder.Services.AddSingleton<IConnectionMultiplexer>(provider =>
     ConnectionMultiplexer.Connect("localhost:6379"));
 
-// Register database functionality
+// Register RedisDatabase with collection configuration
 builder.Services.AddRedisDatabase((provider, factory) =>
 {
     var serializer = new JsonRedisSerializer();
 
-    // Configure your collections
-    factory.RegisterEntityCollection<int, User>(cfg => cfg
+    // Configure entity collections
+    factory.RegisterEntityCollection<int, User>("users", cfg => cfg
         .WithKeySpace("users")
         .WithSerializer(serializer)
         .WithDefaultLifetimeProvider(TimeSpan.FromMinutes(15))
         .WithUniqueKeyFactory(id => id.ToString()));
+
+    // Configure concurrent collections with optimistic locking
+    factory.RegisterConcurrentEntityCollection<int, Order>("orders", cfg => cfg
+        .WithKeySpace("orders")
+        .WithSerializer(serializer)
+        .WithDefaultLifetimeProvider(TimeSpan.FromMinutes(30))
+        .WithUniqueKeyFactory(id => id.ToString())
+        .WithOldConcurrencyTokenSelector(order => order.Version)
+        .WithNewConcurrencyTokenSelector(() => Guid.NewGuid().ToString()));
 });
 ```
 
-See [Database README](./Database/README.md) for detailed documentation.
-
-### Size Monitoring
-
-For monitoring Redis keyspace metrics:
+### Using Collections
 
 ```csharp
-using BlueBrown.Sportsbook.Redis.DatabaseSizeCollectors;
+public class UserService
+{
+    private readonly IRedisCollectionsFactory _factory;
+    private readonly IDatabase _database;
 
-builder.Services.AddDatabaseSizeCollectors(provider =>
-    new DatabaseSizeCollectorsSettings(TimeSpan.FromMinutes(5)))
-    .AddRedisSizeCollector(provider =>
-        new RedisSizeCollectorSettings(
-            database: provider.GetRequiredService<IConnectionMultiplexer>().GetDatabase(0),
-            collectorName: "Redis-Cache",
-            metrics: provider.GetRequiredService<IDatabaseMetricsConnector>()));
+    public UserService(IRedisCollectionsFactory factory, IConnectionMultiplexer multiplexer)
+    {
+        _factory = factory;
+        _database = multiplexer.GetDatabase();
+    }
+
+    public async Task<User?> GetUserAsync(int userId)
+    {
+        var context = new RedisContext(_database);
+        var collection = _factory.GetEntityCollection<int, User>(context, "users");
+
+        // Immediate execution - single entity lookup
+        return await collection.TryGet(userId);
+    }
+
+    public async Task SaveUserAsync(User user)
+    {
+        var context = new RedisContext(_database);
+        var collection = _factory.GetEntityCollection<int, User>(context, "users");
+
+        await collection.Set(user.Id, user);
+        await context.Commit();
+    }
+}
 ```
 
 ## Architecture
@@ -82,14 +107,18 @@ builder.Services.AddDatabaseSizeCollectors(provider =>
 The library is organized into feature-specific namespaces:
 
 ```
-BlueBrown.Sportsbook.Redis
-├── Database/               # Entity collections, streams, caching
-│   ├── Collections/        # Entity, Concurrent, Child collections
-│   ├── Adapters/          # Low-level Redis adapters
-│   ├── Builders/          # Fluent configuration builders
-│   ├── Serializers/       # Serialization infrastructure
-│   └── Factories/         # Collection factory pattern
-└── DatabaseSizeCollectors/ # Keyspace monitoring
+RedisDatabase/
+├── Collections/            # Entity, Concurrent, Child collections
+├── Adapters/              # Low-level Redis adapters (String, Hash, Stream)
+├── Builders/              # Fluent configuration builders
+├── Serializers/           # Serialization infrastructure
+├── Factories/             # Collection factory pattern
+├── ExpirationUpdaters/    # Background TTL management
+├── LifetimeProvider/      # Expiration policy management
+└── PeriodicTriggers/      # Scheduled task infrastructure
+
+RedisDatabase.Extensions.DependencyInjection/
+└── ServiceCollectionExtensions  # DI registration helpers
 ```
 
 ## Key Concepts
@@ -227,23 +256,130 @@ var item = await childCollection.TryGetChild(orderId, itemId);       // Immediat
 var itemResult = childCollection.TryReadChild(orderId, itemId);      // Deferred
 ```
 
-## Feature Documentation
+## Documentation
 
-- **[Database Operations](./Database/README.md)** - Complete guide to entity collections, streams, and caching
-- **[Database Size Monitoring](./DatabaseSizeCollectors/README.md)** - Redis keyspace metrics collection and monitoring
-- **[CLAUDE.md](./CLAUDE.md)** - Detailed technical architecture and development documentation
+- **[CLAUDE.md](./CLAUDE.md)** - Detailed technical architecture and development documentation (for contributors)
 
 ## Best Practices
 
 1. **Use Singleton Connections** - `IConnectionMultiplexer` should be registered as a singleton
-2. **Bring Your Own Serializer** - Implement `IRedisSerializer` for your use case
+2. **Bring Your Own Serializer** - Implement `IRedisSerializer` for your serialization needs (JSON, MessagePack, etc.)
 3. **Choose the Right Execution Pattern**:
    - Use `TryGet` for single entity lookups (immediate execution)
    - Use `TryRead` + `ExecuteBatch` for multiple operations (deferred execution)
 4. **Batch Operations** - Use `RedisContext` batching for multiple operations to minimize network round-trips
-5. **Monitor Keyspace** - Use size collectors to track Redis memory usage
-6. **Handle Conflicts** - Catch `RedisConflictException` for concurrent operations
+5. **Handle Conflicts** - Catch `RedisConflictException` when using concurrent collections with optimistic locking
+6. **Configure Expiration** - Set appropriate TTL values using `WithDefaultLifetimeProvider` to prevent memory bloat
+7. **Register Collections at Startup** - Register all collections during application startup for best performance
 
-## Support
+## Collection Types
 
-For issues, questions, or contributions, please refer to the project repository or contact the BlueBrown Development Team.
+### EntityCollection
+Basic entity storage with automatic expiration management. Ideal for simple caching scenarios.
+
+```csharp
+factory.RegisterEntityCollection<int, User>("users", cfg => cfg
+    .WithKeySpace("users")
+    .WithSerializer(serializer)
+    .WithDefaultLifetimeProvider(TimeSpan.FromMinutes(15))
+    .WithUniqueKeyFactory(id => id.ToString()));
+```
+
+### ConcurrentEntityCollection
+Entity storage with optimistic locking for handling concurrent updates without conflicts.
+
+```csharp
+factory.RegisterConcurrentEntityCollection<int, Order>("orders", cfg => cfg
+    .WithKeySpace("orders")
+    .WithSerializer(serializer)
+    .WithDefaultLifetimeProvider(TimeSpan.FromMinutes(30))
+    .WithUniqueKeyFactory(id => id.ToString())
+    .WithOldConcurrencyTokenSelector(order => order.Version)  // Return null for new items!
+    .WithNewConcurrencyTokenSelector(() => Guid.NewGuid().ToString()));
+```
+
+#### How Optimistic Concurrency Works
+
+The concurrent collection uses version tokens to prevent conflicting updates:
+
+1. **WithOldConcurrencyTokenSelector**: Extracts the current version from the entity
+   - **For new items**: Must return `null` (item doesn't exist in Redis yet)
+   - **For existing items**: Returns the current version (e.g., `order.Version`)
+
+2. **WithNewConcurrencyTokenSelector**: Generates a new version token when saving
+   - Called every time you save an item
+   - Common implementations: `Guid.NewGuid().ToString()`, incrementing integers, timestamps
+
+**Example Entity:**
+```csharp
+public class Order
+{
+    public int Id { get; set; }
+    public string? Version { get; set; }  // Null for new orders
+    public decimal Total { get; set; }
+    // ... other properties
+}
+
+// Creating a new order
+var newOrder = new Order
+{
+    Id = 123,
+    Version = null,  // ⚠️ IMPORTANT: null indicates this is a new item
+    Total = 99.99m
+};
+
+// Updating an existing order
+var existingOrder = await collection.TryGet(123);
+existingOrder.Total = 149.99m;
+// Version is still "abc-123" - Redis will verify this matches before updating
+```
+
+**What Happens During Save:**
+```csharp
+await collection.Set(order.Id, order);
+await context.Commit();
+
+// Internally:
+// 1. Reads order.Version (null for new, "abc-123" for existing)
+// 2. Checks Redis: if Version is null, key must NOT exist; if "abc-123", key must have that version
+// 3. If check passes: saves with new version from WithNewConcurrencyTokenSelector
+// 4. If check fails: throws RedisConflictException
+```
+
+**Handling Conflicts:**
+```csharp
+try
+{
+    var order = await collection.TryGet(orderId);
+    order.Total = 149.99m;
+
+    await collection.Set(orderId, order);
+    await context.Commit();
+}
+catch (RedisConflictException)
+{
+    // Another process updated this order - retry or handle appropriately
+    // Common strategies: retry with exponential backoff, merge changes, notify user
+}
+```
+
+### ChildEntityCollection
+Hierarchical entity relationships where child entities belong to a parent entity.
+
+```csharp
+factory.RegisterChildEntityCollection<int, int, OrderItem>("order-items", cfg => cfg
+    .WithKeySpace("orders")
+    .WithChildKeyPrefix("items")
+    .WithSerializer(serializer)
+    .WithDefaultLifetimeProvider(TimeSpan.FromMinutes(30))
+    .WithUniqueParentKeyFactory(orderId => orderId.ToString())
+    .WithUniqueChildKeyFactory(itemId => itemId.ToString()));
+```
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit issues, feature requests, or pull requests.
+
+## License
+
+See [LICENSE](./LICENSE) file for details.

@@ -19,7 +19,7 @@
 	</ItemGroup>
 
 	<ItemGroup>
-	  <ProjectReference Include="..\RedisDatabase\RedisDatabase.csproj" />
+	  <PackageReference Include="Redis-Database" Version="1.0.0" />
 	</ItemGroup>
 
 </Project>
