@@ -10,8 +10,8 @@
 		<Description>A redis database library</Description>
 		<PackageLicenseExpression>MIT</PackageLicenseExpression>
 		<RepositoryUrl>https://github.com/askoutaris/redis-database</RepositoryUrl>
-		<PackageId>Redis-Database</PackageId>
-		<Version>1.0.1</Version>
+		<PackageId>RedisDatabase</PackageId>
+		<Version>1.0.0</Version>
 	</PropertyGroup>
 
 	<ItemGroup>
