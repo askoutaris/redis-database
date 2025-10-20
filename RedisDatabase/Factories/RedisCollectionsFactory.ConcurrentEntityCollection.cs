@@ -34,6 +34,7 @@ namespace RedisDatabase.Factories
 
 	partial class RedisCollectionsFactory : IRedisCollectionsFactory
 	{
+		/// <inheritdoc/>
 		public void RegisterConcurrentEntityCollection<TKey, TEntity>(Func<IKeySpaceStep<TKey, TEntity>, IConcurrentEntityCollectionBuilder<TKey, TEntity>> configure, string name = "default")
 			where TKey : notnull
 			where TEntity : class
@@ -52,6 +53,7 @@ namespace RedisDatabase.Factories
 			_builders[key] = configuredBuilder;
 		}
 
+		/// <inheritdoc/>
 		public IEntityCollection<TKey, TEntity> GetConcurrentEntityCollection<TKey, TEntity>(IRedisContext context, string name = "default")
 			where TKey : notnull
 			where TEntity : class

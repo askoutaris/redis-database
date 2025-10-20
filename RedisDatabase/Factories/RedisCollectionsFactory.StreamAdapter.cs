@@ -30,6 +30,7 @@ namespace RedisDatabase.Factories
 
 	public partial class RedisCollectionsFactory : IRedisCollectionsFactory
 	{
+		/// <inheritdoc/>
 		public void RegisterStreamAdapter<TType>(Func<IStreamKeyStep<TType>, IStreamAdapterBuilder<TType>> configure, string name = "default")
 			where TType : class
 		{
@@ -47,6 +48,7 @@ namespace RedisDatabase.Factories
 			_builders[key] = configuredBuilder;
 		}
 
+		/// <inheritdoc/>
 		public IStreamAdapter<TType> GetStreamAdapter<TType>(IRedisContext context, string name = "default")
 			where TType : class
 		{

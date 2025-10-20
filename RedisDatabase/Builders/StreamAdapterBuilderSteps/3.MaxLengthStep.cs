@@ -17,16 +17,25 @@ namespace RedisDatabase.Builders.StreamAdapterBuilderSteps
 		IStreamAdapterBuilder<TType> WithMaxLength(int maxLength);
 	}
 
+	/// <summary>
+	/// Implementation of the max length configuration step in the stream adapter builder.
+	/// </summary>
+	/// <typeparam name="TType">The type of messages in the stream.</typeparam>
 	public class MaxLengthStep<TType> : IMaxLengthStep<TType>
 		where TType : class
 	{
 		private readonly IStreamAdapterBuilder<TType> _builder;
 
+		/// <summary>
+		/// Initializes a new instance of the max length step with the specified builder.
+		/// </summary>
+		/// <param name="builder">The stream adapter builder to configure.</param>
 		public MaxLengthStep(IStreamAdapterBuilder<TType> builder)
 		{
 			_builder = builder;
 		}
 
+		/// <inheritdoc/>
 		public IStreamAdapterBuilder<TType> WithMaxLength(int maxLength)
 		{
 			if (maxLength <= 0)

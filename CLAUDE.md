@@ -14,10 +14,6 @@
   - [Architecture](#database-size-collectors---architecture)
   - [Testing](#database-size-collectors---testing)
   - [Recent Work](#database-size-collectors---recent-work)
-- [Feature: Cache Proxy](#feature-cache-proxy)
-  - [Key Components](#cache-proxy---key-components)
-  - [Architecture](#cache-proxy---architecture)
-  - [Testing](#cache-proxy---testing)
 - [Cross-Cutting Concerns](#cross-cutting-concerns)
   - [Logging Strategy](#logging-strategy)
   - [Testing Requirements](#testing-requirements)
@@ -33,7 +29,6 @@ This is an extension package for the BlueBrown.Sportsbook.Common library that pr
 
 - **Database Operations** - Entity caching, collections, streams, and data persistence
 - **Database Size Monitoring** - Redis keyspace metrics collection
-- **Cache Proxy** - Generic caching abstraction with versioning and adapter patterns
 
 The library is designed as a multi-feature package where each feature is self-contained but shares common infrastructure.
 
@@ -492,205 +487,6 @@ public class RedisSizeCollectorSettings
 
 ---
 
-## Feature: Cache Proxy
-
-**Location:** `CacheProxy\` namespace
-
-Provides a generic caching abstraction layer with adapter patterns for different Redis data structures.
-
-### Cache Proxy - Key Components
-
-#### Core Classes
-
-- **CacheProxy<TKey, TEntity>**: Generic cache proxy implementation that delegates to adapters
-- **ICacheProxyKey**: Interface for cache keys with unique string representation
-- **IVersionedEntity**: Interface for entities with version tracking
-
-#### Adapters
-
-- **ICacheProxyAdapter<TKey, TEntity>**: Interface for cache storage adapters
-- **HashsetCacheProxyAdapter**: Adapter using Redis hashes for storage with version field management
-- **IHashetFieldsAdapter**: Interface for managing hash fields and version fields
-- **HashetFieldsAdapter**: Implementation handling root fields and version field creation/parsing/truncation
-
-#### Factory Pattern
-
-- **ICacheProxyFactory**: Factory interface for creating cache proxy instances
-- **CacheProxyFactory**: Implementation that creates cache proxies with automatic type signature validation
-
-### Cache Proxy - Architecture
-
-#### Cache Proxy Pattern
-
-The `CacheProxy<TKey, TEntity>` class provides a simple, generic interface for caching operations:
-
-```csharp
-public class CacheProxy<TKey, TEntity> : ICacheProxy<TKey, TEntity>
-    where TKey : ICacheProxyKey
-    where TEntity : class
-{
-    public void StoreCopy(TKey key, TEntity? entity);
-    public void StoreCopies(IEnumerable<KeyValuePair<TKey, TEntity?>> entries);
-    public Task<TEntity?> ReadCopy(TKey key);
-    public Task<Dictionary<TKey, TEntity?>> ReadCopies(params TKey[] keys);
-    public void Remove(TKey key);
-    public void RemoveMany(params TKey[] keys);
-}
-```
-
-**Key Design Decisions:**
-- **Adapter Delegation**: All operations delegate to the configured adapter
-- **Batch Operations**: StoreCopies uses a single batch for multiple entries
-- **Database Integration**: Gets default database and creates batches per operation
-- **Null Support**: Handles null entities gracefully throughout
-
-#### Hashset Adapter Implementation
-
-The `HashsetCacheProxyAdapter` uses Redis hashes to store entities with versioning support:
-
-**Storage Format:**
-- **root field**: Serialized entity bytes
-- **v-{version} fields**: Version tracking fields (one per version)
-
-**Version Field Management:**
-1. **Creation**: When storing versioned entities, creates a version field `v-{Version}`
-2. **Parsing**: Reads all version fields and tracks the maximum version
-3. **Truncation**: When version field count reaches capacity (10), deletes oldest versions
-
-**Read Logic:**
-1. Execute `HashGetAll` for all requested keys
-2. Parse fields to extract bytes and max version
-3. Deserialize entity from bytes
-4. For versioned entities, validate entity version >= max version
-5. If version mismatch or deserialization fails, remove the key
-
-**Error Handling:**
-- **MismatchSignatureException**: Logs warning and removes key (schema change detected)
-- **General Exception**: Logs error and removes key (corrupted data)
-- **Parse Failures**: Skips key silently (missing or invalid data)
-
-#### Fields Adapter Architecture
-
-The `HashetFieldsAdapter` manages hash field creation and parsing:
-
-**Constants:**
-- `_rootField`: "root" - Field name for serialized entity
-- `_versionFieldPrefix`: "v" - Prefix for version fields
-- `_versionFieldsCapacity`: 10 - Maximum version fields before truncation
-
-**GetFields Method:**
-- Returns root field with serialized bytes
-- For versioned entities, adds version field `v-{version}` with version value
-
-**TryParseFields Method:**
-- Iterates all fields
-- Extracts root field bytes
-- Tracks version fields and calculates max version
-- Returns true only if root field with non-null bytes exists
-
-**TryTruncateVersionFields Method:**
-- Only truncates when count >= capacity
-- Deletes oldest versions: `count - capacity/2`
-- Orders by version value (oldest first)
-- Uses `HashDelete` with field names array
-
-#### Cache Proxy Factory Architecture
-
-The `CacheProxyFactory` provides a centralized factory for creating cache proxy instances with built-in signature validation:
-
-**Automatic Signature Validation:**
-- All cache proxies created by the factory automatically wrap the provided serializer with `RedisSerializerSignatureDecorator`
-- This ensures schema changes are detected during deserialization without requiring explicit configuration
-- Uses SHA256 hash generation via TypeSignature library for signature creation
-
-**Factory Method:**
-```csharp
-public ICacheProxy<TKey, TEntity> Create<TKey, TEntity>(
-    string keyPrefix,
-    IRedisSerializer serializer,
-    TimeSpan expiration,
-    string rootField = "root",
-    string versionFieldPrefix = "v",
-    short versionFieldsCapacity = 10)
-    where TKey : ICacheProxyKey
-    where TEntity : class
-```
-
-**Implementation Details:**
-1. Wraps user-provided serializer with signature validation decorator
-2. Creates `HashetFieldsAdapter` with specified field configuration
-3. Creates `HashsetCacheProxyAdapter` with decorated serializer
-4. Returns configured `CacheProxy<TKey, TEntity>` instance
-
-**Benefits:**
-- **Zero Configuration**: Signature validation is automatic for all cache proxies
-- **Consistency**: All cached entities use the same signature validation approach
-- **Error Prevention**: Schema changes are caught at deserialization time with clear error messages
-
-### Cache Proxy - Testing
-
-**Location:** `Tests/CacheProxy/` (65 tests)
-
-#### Test Suites
-
-- **CacheProxyTests.cs**: 34 tests covering proxy orchestration
-  - Constructor validation
-  - StoreCopy/StoreCopies operations
-  - ReadCopy/ReadCopies with various scenarios
-  - Remove/RemoveMany operations
-  - Database and batch interaction verification
-
-- **HashsetCacheProxyAdapterTests.cs**: 31 tests covering adapter implementation
-  - Store operations with entities and null values
-  - Read operations with success scenarios
-  - Version validation (matching, higher, lower versions)
-  - Exception handling (MismatchSignature, general exceptions)
-  - Parse failure handling
-  - Remove operations
-  - TryTruncateVersionFields integration
-
-- **HashetFieldsAdapterTests.cs**: 37 tests covering field management
-  - Constructor validation
-  - GetFields for versioned/non-versioned entities
-  - GetFields with null handling
-  - TryParseFields success cases (root only, with versions, multiple versions)
-  - TryParseFields failure cases (no root, null root, empty fields)
-  - TryTruncateVersionFields capacity management
-  - TryTruncateVersionFields correct deletion of oldest versions
-
-#### Key Testing Areas
-
-1. **Adapter Delegation**: Verifying CacheProxy delegates to adapters correctly
-2. **Batch Management**: Single batch for StoreCopies, new batch per ReadCopies
-3. **Version Logic**: Version comparison and key removal on mismatch
-4. **Field Parsing**: Correct extraction of root and version fields
-5. **Truncation Logic**: Deletion of oldest versions when capacity reached
-6. **Error Scenarios**: Exception handling and key cleanup
-7. **Null Handling**: Proper support for null entities throughout
-
-### Cache Proxy - Recent Work
-
-#### Factory Implementation with Automatic Signature Validation
-
-- **CacheProxyFactory**: Implemented factory pattern for cache proxy creation
-- **GetSignaturedSerializer Method**: Private method that wraps serializers with signature validation
-- **Automatic Protection**: All cache proxies now include schema change detection by default
-- **XML Documentation**: Complete documentation on `ICacheProxyFactory` interface explaining automatic signature validation
-
-#### Workbench Restructuring
-
-- **Scenario Pattern**: Restructured Workbench to match Kafka Workbench architecture
-- **IScenario Interface**: Added common interface for all scenarios with Start/Stop methods
-- **StartupHostedService**: Implemented hosted service for scenario lifecycle management
-- **Two Scenarios Implemented**:
-  - **RedisDatabaseScenario**: Tests entity collections, child collections, and database operations
-  - **RedisCacheProxyScenario**: Tests cache proxy functionality with versioned entities
-- **Shared Components**: Moved common types (Person, Address, PersonKey, JsonRedisSerializer) to `Scenarios/Shared/`
-- **RedisDBContext**: Moved to `Scenarios/RedisDatabase/` as scenario-specific component
-- **Interactive Selection**: Program.cs prompts user to select scenario at startup
-
----
-
 ## Cross-Cutting Concerns
 
 ### Logging Strategy
@@ -873,16 +669,6 @@ public void Test() {
 - ✅ Fluent DI registration
 - ✅ Complete feature documentation
 
-### Cache Proxy
-- ✅ Generic cache abstraction with adapter pattern
-- ✅ 65 comprehensive tests with 100% coverage
-- ✅ Hashset adapter with version field management
-- ✅ Automatic truncation of old version fields
-- ✅ Error handling with key cleanup
-- ✅ Support for versioned and non-versioned entities
-- ✅ Factory pattern with automatic signature validation
-- ✅ Zero-configuration schema change detection
-
 ### Code Quality
 - ✅ Consistent parameter validation across all classes
 - ✅ Pure xUnit assertions (no FluentAssertions)
@@ -978,33 +764,6 @@ builder.Services.AddDatabaseSizeCollectors(provider =>
             metrics: provider.GetRequiredService<IDatabaseMetricsConnector>()));
 ```
 
-### Cache Proxy Factory - Automatic Signature Validation
-
-```csharp
-// Register Cache Proxy services
-builder.Services.AddRedisCacheProxy();
-
-// Get factory and create cache proxy
-var factory = serviceProvider.GetRequiredService<ICacheProxyFactory>();
-
-// Cache proxy creation - signature validation is automatic
-var cacheProxy = factory.Create<PersonKey, Person>(
-    keyPrefix: typeof(Person).FullName!,
-    serializer: new JsonRedisSerializer(),  // Automatically wrapped with signature validation
-    expiration: TimeSpan.FromMinutes(60));
-
-// Store and retrieve entities
-var person = new Person(1, 0, "John Doe");
-var key = new PersonKey { Id = person.Id };
-
-cacheProxy.StoreCopy(key, person);
-var retrieved = await cacheProxy.ReadCopy(key);
-
-// Schema changes are automatically detected during deserialization
-// If Person class structure changes, MismatchSignatureException will be thrown
-// and the corrupted cache entry will be removed
-```
-
 ### Step Builder Pattern - Compile-Time Safety
 
 ```csharp
@@ -1037,11 +796,9 @@ Workbench/
 │   │   ├── Types.Person.cs                 # Person entity and PersonKey
 │   │   ├── Types.Address.cs                # Address entity
 │   │   └── JsonRedisSerializer.cs          # JSON serializer implementation
-│   ├── RedisDatabase/
-│   │   ├── @Scenario.cs                    # Database operations scenario
-│   │   └── RedisDBContext.cs               # Database context
-│   └── RedisCacheProxy/
-│       └── @Scenario.cs                    # Cache proxy scenario
+│   └── RedisDatabase/
+│       ├── @Scenario.cs                    # Database operations scenario
+│       └── RedisDBContext.cs               # Database context
 ```
 
 **Running Scenarios:**
@@ -1051,7 +808,6 @@ dotnet run --project Workbench
 
 # When prompted, enter scenario name:
 # - "redisdatabase"   - Test entity collections and database operations
-# - "rediscacheproxy" - Test cache proxy with versioned entities
 ```
 
 **Scenario Implementation Pattern:**

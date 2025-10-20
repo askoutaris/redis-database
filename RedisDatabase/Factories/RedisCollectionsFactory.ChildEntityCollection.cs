@@ -36,6 +36,7 @@ namespace RedisDatabase.Factories
 
 	partial class RedisCollectionsFactory : IRedisCollectionsFactory
 	{
+		/// <inheritdoc/>
 		public void RegisterChildEntityCollection<TParentKey, TChildKey, TEntity>(Func<IKeySpaceStep<TParentKey, TChildKey, TEntity>, IChildEntityCollectionBuilder<TParentKey, TChildKey, TEntity>> configure, string name = "default")
 			where TParentKey : notnull
 			where TEntity : class
@@ -54,6 +55,7 @@ namespace RedisDatabase.Factories
 			_builders[key] = configuredBuilder;
 		}
 
+		/// <inheritdoc/>
 		public IChildEntityCollection<TParentKey, TChildKey, TEntity> GetChildEntityCollection<TParentKey, TChildKey, TEntity>(IRedisContext context, string name = "default")
 			where TParentKey : notnull
 			where TEntity : class

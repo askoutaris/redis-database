@@ -47,6 +47,9 @@ namespace RedisDatabase
 		Task ExecuteBatch();
 	}
 
+	/// <summary>
+	/// Implementation of Redis context for managing batched and transactional operations.
+	/// </summary>
 	public class RedisContext : IRedisContext
 	{
 		private int _used;
@@ -56,9 +59,18 @@ namespace RedisDatabase
 		private readonly IDatabase _db;
 		private IBatch? _batch;
 
+		/// <inheritdoc/>
 		public IDatabase Database => _db;
+
+		/// <summary>
+		/// Gets or creates the batch instance for batched operations.
+		/// </summary>
 		public IBatch Batch => _batch ??= _db.CreateBatch();
 
+		/// <summary>
+		/// Initializes a new instance of the RedisContext with the specified database.
+		/// </summary>
+		/// <param name="db">The Redis database instance.</param>
 		public RedisContext(IDatabase db)
 		{
 			_used = 0;
@@ -68,6 +80,7 @@ namespace RedisDatabase
 			_batchTasks = [];
 		}
 
+		/// <inheritdoc/>
 		public Task<T> AddBatch<T>(Func<IBatch, Task<T>> action)
 		{
 			var task = action(Batch);
@@ -77,12 +90,15 @@ namespace RedisDatabase
 			return task;
 		}
 
+		/// <inheritdoc/>
 		public void AddCommand(Func<IDatabaseAsync, Task> action)
 			=> _actions.Add(action);
 
+		/// <inheritdoc/>
 		public void AddCondition(Condition condition)
 			=> _conditions.Add(condition);
 
+		/// <inheritdoc/>
 		public async Task Commit()
 		{
 			EnsureNotUsed();
@@ -93,6 +109,7 @@ namespace RedisDatabase
 				await CommitIndividually();
 		}
 
+		/// <inheritdoc/>
 		public async Task ExecuteBatch()
 		{
 			EnsureNotUsed();

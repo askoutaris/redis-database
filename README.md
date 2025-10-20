@@ -51,14 +51,14 @@ builder.Services.AddRedisDatabase((provider, factory) =>
     var serializer = new JsonRedisSerializer();
 
     // Configure entity collections
-    factory.RegisterEntityCollection<int, User>("users", cfg => cfg
+    factory.RegisterEntityCollection<int, User>(steps => steps
         .WithKeySpace("users")
         .WithSerializer(serializer)
         .WithDefaultLifetimeProvider(TimeSpan.FromMinutes(15))
         .WithUniqueKeyFactory(id => id.ToString()));
 
     // Configure concurrent collections with optimistic locking
-    factory.RegisterConcurrentEntityCollection<int, Order>("orders", cfg => cfg
+    factory.RegisterConcurrentEntityCollection<int, Order>(steps => steps
         .WithKeySpace("orders")
         .WithSerializer(serializer)
         .WithDefaultLifetimeProvider(TimeSpan.FromMinutes(30))
@@ -85,7 +85,7 @@ public class UserService
     public async Task<User?> GetUserAsync(int userId)
     {
         var context = new RedisContext(_database);
-        var collection = _factory.GetEntityCollection<int, User>(context, "users");
+        var collection = _factory.GetEntityCollection<int, User>(context);
 
         // Immediate execution - single entity lookup
         return await collection.TryGet(userId);
@@ -94,7 +94,7 @@ public class UserService
     public async Task SaveUserAsync(User user)
     {
         var context = new RedisContext(_database);
-        var collection = _factory.GetEntityCollection<int, User>(context, "users");
+        var collection = _factory.GetEntityCollection<int, User>(context);
 
         await collection.Set(user.Id, user);
         await context.Commit();
@@ -272,13 +272,48 @@ var itemResult = childCollection.TryReadChild(orderId, itemId);      // Deferred
 6. **Configure Expiration** - Set appropriate TTL values using `WithDefaultLifetimeProvider` to prevent memory bloat
 7. **Register Collections at Startup** - Register all collections during application startup for best performance
 
+## Named Registrations
+
+You can register multiple collections of the same type with different configurations using the optional `name` parameter. This is useful for having different caching strategies or TTLs for the same entity type.
+
+```csharp
+builder.Services.AddRedisDatabase((provider, factory) =>
+{
+    var serializer = new JsonRedisSerializer();
+
+    // Short-lived cache
+    factory.RegisterEntityCollection<int, User>(
+        steps => steps
+            .WithKeySpace("users:cache")
+            .WithSerializer(serializer)
+            .WithDefaultLifetimeProvider(TimeSpan.FromMinutes(5))
+            .WithUniqueKeyFactory(id => id.ToString()),
+        name: "short-cache");
+
+    // Long-lived cache
+    factory.RegisterEntityCollection<int, User>(
+        steps => steps
+            .WithKeySpace("users:persistent")
+            .WithSerializer(serializer)
+            .WithDefaultLifetimeProvider(TimeSpan.FromHours(1))
+            .WithUniqueKeyFactory(id => id.ToString()),
+        name: "long-cache");
+});
+
+// Retrieving named collections
+var shortCache = factory.GetEntityCollection<int, User>(context, "short-cache");
+var longCache = factory.GetEntityCollection<int, User>(context, "long-cache");
+```
+
+**Note:** If you don't specify a name, it defaults to `"default"`.
+
 ## Collection Types
 
 ### EntityCollection
 Basic entity storage with automatic expiration management. Ideal for simple caching scenarios.
 
 ```csharp
-factory.RegisterEntityCollection<int, User>("users", cfg => cfg
+factory.RegisterEntityCollection<int, User>(steps => steps
     .WithKeySpace("users")
     .WithSerializer(serializer)
     .WithDefaultLifetimeProvider(TimeSpan.FromMinutes(15))
@@ -289,7 +324,7 @@ factory.RegisterEntityCollection<int, User>("users", cfg => cfg
 Entity storage with optimistic locking for handling concurrent updates without conflicts.
 
 ```csharp
-factory.RegisterConcurrentEntityCollection<int, Order>("orders", cfg => cfg
+factory.RegisterConcurrentEntityCollection<int, Order>(steps => steps
     .WithKeySpace("orders")
     .WithSerializer(serializer)
     .WithDefaultLifetimeProvider(TimeSpan.FromMinutes(30))
@@ -367,13 +402,13 @@ catch (RedisConflictException)
 Hierarchical entity relationships where child entities belong to a parent entity.
 
 ```csharp
-factory.RegisterChildEntityCollection<int, int, OrderItem>("order-items", cfg => cfg
+factory.RegisterChildEntityCollection<int, string, OrderItem>(steps => steps
     .WithKeySpace("orders")
     .WithChildKeyPrefix("items")
     .WithSerializer(serializer)
     .WithDefaultLifetimeProvider(TimeSpan.FromMinutes(30))
     .WithUniqueParentKeyFactory(orderId => orderId.ToString())
-    .WithUniqueChildKeyFactory(itemId => itemId.ToString()));
+    .WithUniqueChildKeyFactory(itemId => itemId));
 ```
 
 ## Contributing

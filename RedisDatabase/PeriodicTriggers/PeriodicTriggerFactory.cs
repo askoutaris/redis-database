@@ -54,20 +54,29 @@
 		IPeriodicTrigger Create<T>(TimeSpan interval, bool autoStart = true);
 	}
 
+	/// <summary>
+	/// Factory implementation for creating periodic triggers with logger integration.
+	/// </summary>
 	public class PeriodicTriggerFactory : IPeriodicTriggerFactory
 	{
 		private readonly ILoggerFactory _loggerFactory;
 
+		/// <summary>
+		/// Initializes a new instance of the PeriodicTriggerFactory with the specified logger factory.
+		/// </summary>
+		/// <param name="loggerFactory">Factory for creating loggers.</param>
 		public PeriodicTriggerFactory(ILoggerFactory loggerFactory)
 		{
 			_loggerFactory = loggerFactory;
 		}
 
+		/// <inheritdoc/>
 		public IPeriodicTrigger Create(TimeSpan interval, ILogger logger, bool autoStart = true)
 		{
 			return Create(interval, logger, CancellationToken.None, autoStart);
 		}
 
+		/// <inheritdoc/>
 		public IPeriodicTrigger Create(TimeSpan interval, string name, bool autoStart = true)
 		{
 			ArgumentNullException.ThrowIfNull(name, nameof(name));
@@ -77,6 +86,7 @@
 			return Create(interval, logger, CancellationToken.None, autoStart);
 		}
 
+		/// <inheritdoc/>
 		public IPeriodicTrigger Create(TimeSpan interval, string name, CancellationToken cancellationToken, bool autoStart = true)
 		{
 			ArgumentNullException.ThrowIfNull(name, nameof(name));
@@ -86,6 +96,7 @@
 			return Create(interval, logger, cancellationToken, autoStart);
 		}
 
+		/// <inheritdoc/>
 		public IPeriodicTrigger Create<T>(TimeSpan interval, bool autoStart = true)
 		{
 			var logger = _loggerFactory.CreateLogger<ILogger<T>>();
@@ -93,6 +104,7 @@
 			return Create(interval, logger, CancellationToken.None, autoStart);
 		}
 
+		/// <inheritdoc/>
 		public IPeriodicTrigger Create(TimeSpan interval, ILogger logger, CancellationToken cancellationToken, bool autoStart = true)
 		{
 			if (interval <= TimeSpan.Zero)

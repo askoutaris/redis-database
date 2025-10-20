@@ -16,16 +16,25 @@ namespace RedisDatabase.Builders.StreamAdapterBuilderSteps
 		ISerializerStep<TType> WithStreamKey(string streamKey);
 	}
 
+	/// <summary>
+	/// Implementation of the stream key configuration step in the stream adapter builder.
+	/// </summary>
+	/// <typeparam name="TType">The type of messages in the stream.</typeparam>
 	public class StreamKeyStep<TType> : IStreamKeyStep<TType>
 		where TType : class
 	{
 		private readonly IStreamAdapterBuilder<TType> _builder;
 
+		/// <summary>
+		/// Initializes a new instance of the stream key step with the specified builder.
+		/// </summary>
+		/// <param name="builder">The stream adapter builder to configure.</param>
 		public StreamKeyStep(IStreamAdapterBuilder<TType> builder)
 		{
 			_builder = builder;
 		}
 
+		/// <inheritdoc/>
 		public ISerializerStep<TType> WithStreamKey(string streamKey)
 		{
 			ArgumentException.ThrowIfNullOrWhiteSpace(streamKey, nameof(streamKey));

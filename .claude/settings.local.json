@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(dotnet test:*)"
+      "Bash(dotnet test:*)",
+      "Bash(dotnet build \"C:\\Users\\askoutaris\\source\\askoutaris\\redis-database\\RedisDatabase\\RedisDatabase.csproj\")",
+      "Bash(cat \"C:\\Users\\askoutaris\\source\\askoutaris\\redis-database\\RedisDatabase.Extensions.DependencyInjection\\README.md\")"
     ],
     "deny": [],
     "ask": []

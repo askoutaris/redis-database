@@ -14,12 +14,21 @@ namespace RedisDatabase.Factories
 	{
 	}
 
+	/// <summary>
+	/// Factory for creating and managing Redis collections with registration-based configuration caching.
+	/// </summary>
 	public partial class RedisCollectionsFactory : IRedisCollectionsFactory
 	{
 		private readonly BackgroundExpirationUpdater _defaultExpirationUpdater;
 		private readonly ConcurrentDictionary<string, ICollectionBuilder> _builders;
 		private readonly ILoggerFactory _loggerFactory;
 
+		/// <summary>
+		/// Initializes a new instance of the RedisCollectionsFactory with the specified Redis connection and factories.
+		/// </summary>
+		/// <param name="multiplexer">The Redis connection multiplexer.</param>
+		/// <param name="triggerFactory">Factory for creating periodic triggers.</param>
+		/// <param name="loggerFactory">Factory for creating loggers.</param>
 		public RedisCollectionsFactory(IConnectionMultiplexer multiplexer, IPeriodicTriggerFactory triggerFactory, ILoggerFactory loggerFactory)
 		{
 			var trigger = triggerFactory.Create<BackgroundExpirationUpdater>(TimeSpan.FromSeconds(5));
